@@ -65,6 +65,13 @@ def test_normalize_enabled_expands_digits():
     assert normalize_text("room 12", enable=True) == "room one two"
 
 
+def test_normalize_enabled_passes_non_ascii_digits():
+    # Non-Latin digits (Arabic-Indic, Devanagari) must NOT crash and must pass
+    # through untouched — only ASCII [0-9] is expanded.
+    assert normalize_text("price ٤٥", enable=True) == "price ٤٥"
+    assert normalize_text("कमरा ३", enable=True) == "कमरा ३"
+
+
 def test_shear_shape_and_spot():
     silence = _shear(np.array(SILENCE_TOKENS_0_2S)[:, :9], 1025)
     assert silence.shape == (17, 9)

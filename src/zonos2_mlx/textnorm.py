@@ -206,9 +206,11 @@ def normalize_text(text: str, enable: bool = False) -> str:
     """
     if not enable:
         return text
-    # Expand standalone ASCII digit runs to spelled words, digit-by-digit.
+    # Expand ASCII digit runs to spelled words, digit-by-digit. Use an
+    # ASCII-only class ([0-9], NOT \d which also matches Unicode digits the
+    # map has no entry for) so non-Latin input passes through untouched.
     text = re.sub(
-        r"\d+",
+        r"[0-9]+",
         lambda m: " ".join(_DIGIT_WORDS[d] for d in m.group()),
         text,
     )
