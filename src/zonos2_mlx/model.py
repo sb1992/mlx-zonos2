@@ -31,7 +31,7 @@ from .weights import load_safetensors_header, remap_keys  # noqa: E402
 @dataclass
 class TrunkOutput:
     layers: dict[int, mx.array]  # captured per-layer hidden states (T, dim)
-    last: mx.array               # final-layer hidden states (T, dim)
+    last: mx.array               # final-layer hidden states (T, dim) — batch stripped
 
 
 def _is_moe_layer(cfg: Zonos2Config, layer_id: int) -> bool:
@@ -170,14 +170,19 @@ class Zonos2Model(nn.Module):
             x, router_states = layer(x, cos, sin, router_states)
             if i in capture:
                 captured[i] = x[0]  # (T, dim)
-        return TrunkOutput(layers=captured, last=x)
+        return TrunkOutput(layers=captured, last=x[0])  # (T, dim)
 
     def head(self, last: mx.array) -> mx.array:
-        """Multi-output head on the LAST position (native.py 713-722)."""
+        """Multi-output head on the LAST position (native.py 713-722).
+
+        ``last`` is (T, dim) — batch-stripped final hidden states.
+        Returns (n_codebooks, codebook_size+2).
+        """
         cfg = self.cfg
-        hidden = self.out_norm(last[:, -1])  # (B, dim)
+        hidden = self.out_norm(last[-1])     # (dim,) — last token position
+        hidden = hidden[None]                # (1, dim) for lm_head
         logits = self.lm_head(hidden).reshape(
-            hidden.shape[0], cfg.n_codebooks, cfg.codebook_size + 2
+            1, cfg.n_codebooks, cfg.codebook_size + 2
         )
         logits = softcap(logits, cfg.loss_softcap)
         return logits[0]  # (n_codebooks, codebook_size+2)
@@ -186,26 +191,13 @@ class Zonos2Model(nn.Module):
     @classmethod
     def from_pretrained(cls, weights_dir: str) -> "Zonos2Model":
         wdir = Path(weights_dir)
-        # Prefer the model's own config.json; fall back to the oracle fixtures
-        # config (same resolved values) so a checkout without a weights-dir
-        # config still gets special_topk_layers={26:2} etc. The defaults in
-        # Zonos2Config are a last resort.
-        cfg_candidates = [
-            wdir / "config.json",
-            Path(__file__).resolve().parents[2] / "outputs/fixtures/config.json",
-        ]
-        cfg = None
-        for cfg_path in cfg_candidates:
-            if cfg_path.exists():
-                cfg = Zonos2Config.load(cfg_path)
-                break
-        if cfg is None:
-            cfg = Zonos2Config()
-        # special_topk_layers is intrinsic to this 28-layer zonos2 model; if a
-        # bare-defaults config slipped through, restore the known value so the
-        # top-2 layer (26) is not silently demoted to top-1.
-        if not cfg.special_topk_layers and cfg.n_layers == 28 and cfg.moe_n_experts == 16:
-            cfg.special_topk_layers = {"26": 2}
+        cfg_path = wdir / "config.json"
+        if not cfg_path.exists():
+            raise FileNotFoundError(
+                f"{cfg_path} is required (carries special_topk_layers etc.)"
+                " — copy it alongside the weights"
+            )
+        cfg = Zonos2Config.load(cfg_path)
 
         st_files = sorted(wdir.glob("*.safetensors"))
         if not st_files:
