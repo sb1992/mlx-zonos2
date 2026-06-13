@@ -57,6 +57,8 @@ def load_safetensors_header(path: str | Path) -> dict:
     """
     with open(path, "rb") as f:
         (n,) = struct.unpack("<Q", f.read(8))
+        if n <= 0 or n > 100 * 1024 * 1024:
+            raise ValueError(f"safetensors header length {n} is implausible — corrupt file?")
         return json.loads(f.read(n))
 
 
@@ -84,6 +86,10 @@ def scan_layers(hdr: dict) -> tuple[list[int], list[int]]:
         m = dense_pat.match(key)
         if m:
             dense.add(int(m.group(1)))
+
+    overlap = set(moe) & set(dense)
+    if overlap:
+        raise ValueError(f"scan_layers: layers in both MoE and dense: {sorted(overlap)}")
 
     return sorted(moe), sorted(dense)
 

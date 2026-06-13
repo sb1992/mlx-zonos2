@@ -1,6 +1,10 @@
+from pathlib import Path
+
 from zonos2_mlx.weights import load_safetensors_header, scan_layers, remap_keys
 
-SAFE = "weights/zonos2-bf16/zonos2-bf16.safetensors"
+_ROOT = Path(__file__).resolve().parent.parent
+
+SAFE = str(_ROOT / "weights/zonos2-bf16/zonos2-bf16.safetensors")
 
 
 def test_header_loads():
@@ -24,5 +28,15 @@ def test_remap_total():
     assert all(isinstance(v, str) and v for v in mapping.values())
     # no collisions
     assert len(set(mapping.values())) == len(mapping)
-    # spot-check a few representative remaps exist (adjust target names to your MLX module scheme):
-    assert any(k.endswith("attention.wq.weight") or k.endswith("attention.wq") for k in src)
+    # assert target (MLX) paths — locks the current naming scheme
+    assert mapping["layers.0.attention.wq.weight"] == "layers.0.attn.wq.weight"
+    assert mapping["layers.0.attention.wkv.weight"] == "layers.0.attn.wkv.weight"
+    assert mapping["layers.0.attention.temp"] == "layers.0.attn.temp"
+    assert mapping["layers.0.attention.gater.weight"] == "layers.0.attn.gater.weight"
+    assert mapping["layers.3.feed_forward.experts.w13"] == "layers.3.moe.experts.w13"
+    assert mapping["layers.3.feed_forward.router.down_proj.weight"] == "layers.3.moe.router.down_proj.weight"
+    assert mapping["layers.0.feed_forward.w_in.weight"] == "layers.0.ffn.w_in.weight"
+    assert mapping["multi_output.weight"] == "lm_head.weight"
+    assert mapping["multi_embedder.embedders.4.weight"] == "embed.embedders.4.weight"
+    assert mapping["speaker_lda_projection.weight"] == "speaker_lda.weight"
+    assert mapping["speaker_projection.weight"] == "speaker_proj.weight"
