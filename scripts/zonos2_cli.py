@@ -164,7 +164,10 @@ def main() -> int:
         assets_dir = _REPO / _BF16_DIR
     dac_dir = str(assets_dir / "dac_44khz")
     speaker_dir = str(assets_dir / "speaker_encoder")
-    dit_path = str(next(Path(weights_dir).glob("*.safetensors")))
+    _trunk = next(iter(sorted(Path(weights_dir).glob("*.safetensors"))), None)
+    if _trunk is None:
+        ap.error(f"no trunk *.safetensors found in {weights_dir!r} — check --model-dir / --quant.")
+    dit_path = str(_trunk)
 
     # --- resolve the speaker LDA vector ---
     if args.ref is not None:
@@ -211,7 +214,7 @@ def main() -> int:
     print(f"  finite={finite}  abs_max={abs_max:.4f}  silent={abs_max < 1e-4}")
     print(
         f"  wall={elapsed:.1f}s  ->  {per_audio_sec:.2f} s/audio-sec "
-        f"({args.quant}, M-series, serial)"
+        f"({args.model_dir or args.quant}, M-series, serial)"
     )
 
     if not finite or abs_max < 1e-4:

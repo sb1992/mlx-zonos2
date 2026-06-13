@@ -328,10 +328,18 @@ class Dac44k(nn.Module):
             keep = max(0, codes.shape[0] - (self.n_codebooks - 1))
             codes = codes[:keep]
 
-        # 3. Clamp
+        # 3. Empty guard (mirror Zonos2_TTS-ComfyUI runtime.py:106): an immediate
+        #    EOS or a too-short / no-EOS collapse leaves no decodable frame.
+        if codes.shape[0] == 0:
+            raise RuntimeError(
+                "Zonos2 ended before producing decodable audio (no complete frame "
+                "after eos trim). Generation likely collapsed — retry or check the prompt."
+            )
+
+        # 4. Clamp
         codes = np.clip(codes, 0, 1023)
 
-        # 4. (frames, codebooks) -> (1, codebooks, frames) for RVQ
+        # 5. (frames, codebooks) -> (1, codebooks, frames) for RVQ
         codes_mx = mx.array(codes.T[np.newaxis], dtype=mx.int32)  # (1, 9, T)
 
         # 5. RVQ decode: (1, 9, T) -> (1, T, hidden_size)

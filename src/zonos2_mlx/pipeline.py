@@ -40,8 +40,21 @@ class SynthesisResult:
     prompt_len: int
 
 
-def _resolve_speaker_lda(speaker_lda, profile, ref, model) -> mx.array:
-    """Return the (1, speaker_lda_dim) LDA inject vector as a float32 mx.array."""
+def _resolve_speaker_lda(speaker_lda, profile, ref, speaker_enc_dir, dit_for_lda) -> mx.array:
+    """Return the (1, speaker_lda_dim) LDA inject vector as a float32 mx.array.
+
+    Exactly one of ``speaker_lda`` / ``profile`` / ``ref`` must be given. The
+    ``ref`` enrolment paths (``speaker_enc_dir``, ``dit_for_lda``) are resolved
+    by the caller from the weights/speaker dirs, so it works with a preloaded
+    model too.
+    """
+    provided = [n for n, v in (("speaker_lda", speaker_lda), ("profile", profile),
+                               ("ref", ref)) if v is not None]
+    if len(provided) > 1:
+        raise ValueError(f"synthesize() takes exactly one speaker source; got {provided}.")
+    if not provided:
+        raise ValueError("synthesize() needs one of speaker_lda=, profile=, or ref=.")
+
     if speaker_lda is not None:
         arr = np.asarray(speaker_lda, dtype=np.float32)
         if arr.ndim == 1:
@@ -52,28 +65,29 @@ def _resolve_speaker_lda(speaker_lda, profile, ref, model) -> mx.array:
         prof = profile if isinstance(profile, SpeakerProfile) else SpeakerProfile.load(profile)
         return mx.array(prof.lda.reshape(1, -1).astype(np.float32))
 
-    if ref is not None:
-        # Enrol from a PRECOMPUTED log-mel array: ECAPA -> DiT LDA projection.
-        # Raw-wav enrolment (a mel frontend) is out of scope for this module.
-        from .speaker import EcapaTDNN, SpeakerLDA  # local import; GPU-only
+    # ref: enrol from a PRECOMPUTED log-mel array: ECAPA -> DiT LDA projection.
+    # Raw-wav enrolment (a mel frontend) is out of scope for this module.
+    from .speaker import EcapaTDNN, SpeakerLDA  # local import; GPU-only
 
-        mel = np.asarray(ref, dtype=np.float32)
-        if mel.ndim != 3:
-            raise NotImplementedError(
-                "pipeline.synthesize(ref=...) accepts a precomputed log-mel array "
-                "(B, T, mel_dim); raw-waveform enrolment has no frontend in this "
-                "module. Pass speaker_lda=... or profile=... instead."
-            )
-        if getattr(model, "_speaker_encoder_dir", None) is None:
-            raise ValueError("ref enrolment needs the speaker encoder dir; unavailable.")
-        ecapa = EcapaTDNN.from_pretrained(model._speaker_encoder_dir)
-        lda = SpeakerLDA.from_dit(model._dit_safetensors)
-        emb = ecapa(mx.array(mel))            # (B, 2048)
-        vec = lda(emb)                        # (B, 1024)
-        mx.eval(vec)
-        return mx.array(np.asarray(vec, dtype=np.float32)[:1])
-
-    raise ValueError("synthesize() needs one of speaker_lda=, profile=, or ref=.")
+    mel = np.asarray(ref, dtype=np.float32)
+    if mel.ndim != 3:
+        raise NotImplementedError(
+            "pipeline.synthesize(ref=...) accepts a precomputed log-mel array "
+            "(B, T, mel_dim); raw-waveform enrolment has no frontend in this "
+            "module. Pass speaker_lda=... or profile=... instead."
+        )
+    if speaker_enc_dir is None or dit_for_lda is None:
+        raise ValueError(
+            "ref enrolment needs the speaker encoder dir + a trunk safetensors. "
+            "Pass speaker_dir=/weights_dir= (or use a self-contained --model-dir) "
+            "so they resolve — required when reusing a preloaded model."
+        )
+    ecapa = EcapaTDNN.from_pretrained(speaker_enc_dir)
+    lda = SpeakerLDA.from_dit(dit_for_lda)
+    emb = ecapa(mx.array(mel))            # (B, 2048)
+    vec = lda(emb)                        # (B, 1024)
+    mx.eval(vec)
+    return mx.array(np.asarray(vec, dtype=np.float32)[:1])
 
 
 def synthesize(
@@ -107,19 +121,20 @@ def synthesize(
     wdir = Path(weights_dir)
     if model is None:
         model = Zonos2Model.from_pretrained(str(wdir))
-        # Stash optional enrolment paths for the ``ref=`` path. The LDA tensors
-        # live in the trunk under either key (from_dit is key-robust), so the
-        # selected tier's safetensors works even when quantized. The ECAPA
-        # speaker encoder is tier-independent: prefer an explicit ``speaker_dir``,
-        # else look beside the trunk (self-contained tier folder).
-        st = sorted(wdir.glob("*.safetensors"))
-        model._dit_safetensors = str(st[0]) if st else None
-        spk_dir = Path(speaker_dir) if speaker_dir else (wdir / "speaker_encoder")
-        model._speaker_encoder_dir = str(spk_dir) if spk_dir.exists() else None
 
     cfg = model.cfg
 
-    spk = _resolve_speaker_lda(speaker_lda, profile, ref, model)
+    # Resolve the ``ref=`` enrolment assets from the dirs (NOT off the model), so
+    # enrolment works whether or not the model was loaded in this call. The LDA
+    # tensors live in the trunk under either key (from_dit is key-robust), so the
+    # selected tier's safetensors works even quantized; the ECAPA speaker encoder
+    # is tier-independent (explicit ``speaker_dir``, else beside the trunk).
+    _st = sorted(wdir.glob("*.safetensors"))
+    dit_for_lda = str(_st[0]) if _st else None
+    _spk = Path(speaker_dir) if speaker_dir else (wdir / "speaker_encoder")
+    speaker_enc_dir = str(_spk) if _spk.exists() else None
+
+    spk = _resolve_speaker_lda(speaker_lda, profile, ref, speaker_enc_dir, dit_for_lda)
     has_speaker = True
 
     norm_text = normalize_text(text, enable=normalize)

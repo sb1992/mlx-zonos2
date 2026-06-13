@@ -23,7 +23,7 @@ This is a **converted-weight MLX inference runtime** for ZONOS2. It deliberately
 
 It is **not** a drop-in replacement for the upstream package. In particular, this runtime:
 
-- **points at a local converted directory** — there is no HF hub fetch baked into the runtime (you `hf download` the weights yourself, then point `--quant` at them);
+- **points at a local converted directory** — there is no HF hub fetch baked into the runtime (you `hf download` the weights yourself, then point `--model-dir` at the downloaded tier folder, or use `--quant` against the in-repo `weights/zonos2-*` dev layout);
 - **decodes greedily by default** — greedy (temperature 0) is the parity path; `--sample` selects the stochastic oracle sampler;
 - **does inference only** — no fine-tuning or training.
 
@@ -117,7 +117,8 @@ Key flags:
 - `--text` — the text to synthesize (required).
 - `--ref <audio>` **or** `--profile <voice.zonos>` (exactly one) — `--ref` enrolls a reference clip on the fly (needs the `[oracle]` extra for the mel); `--profile` reuses a cached `.zonos` voice (pure-MLX).
 - `--out <wav>` — output path (required).
-- `--quant {bf16,int8,int4}` — precision tier (default `int8`).
+- `--quant {bf16,int8,int4}` — precision tier (default `int8`) against the in-repo `weights/zonos2-*` dev layout.
+- `--model-dir <dir>` — a self-contained MLX weights folder (e.g. one tier of an `hf download`, containing the trunk + `dac_44khz/` + `speaker_encoder/`). Overrides `--quant`; this is the path for downloaded weights.
 - `--speaking-rate <0..7|-1>` — speaking-rate bucket, or `-1` (unset, the default).
 - `--accurate-mode` (default) / `--expressive` — accurate-mode token on/off.
 - `--seed <n>` — sampling seed (only affects `--sample`; greedy is deterministic).
