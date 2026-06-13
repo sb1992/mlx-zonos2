@@ -1,10 +1,18 @@
 from pathlib import Path
 
+import pytest
+
 from zonos2_mlx.weights import load_safetensors_header, scan_layers, remap_keys
 
 _ROOT = Path(__file__).resolve().parent.parent
 
 SAFE = str(_ROOT / "weights/zonos2-bf16/zonos2-bf16.safetensors")
+
+# Reads the bf16 safetensors header (weights are gitignored) — skip on a fresh clone.
+pytestmark = pytest.mark.skipif(
+    not Path(SAFE).exists(),
+    reason="needs weights/zonos2-bf16/zonos2-bf16.safetensors",
+)
 
 
 def test_header_loads():

@@ -56,33 +56,32 @@ Two ways to get runnable MLX weights — **most people want Option A.**
 
 ### Option A — download ready MLX weights (recommended)
 
-Pre-converted, pre-quantized MLX weights are published at [`shraey/zonos2-mlx`](https://huggingface.co/shraey/zonos2-mlx). **No PyTorch, no conversion** — download the tier you want and point the CLI at it:
+Pre-converted, pre-quantized MLX weights are published at [`shraey/zonos2-mlx`](https://huggingface.co/shraey/zonos2-mlx). **No PyTorch, no conversion.** Each tier folder is **self-contained** (trunk + the DAC codec + the speaker encoder), so download one tier and point `--model-dir` at it:
 
 ```bash
-# int8 (~7.6 GB) — the balanced tier
+# int8 (~7.9 GB) — the balanced tier
 hf download shraey/zonos2-mlx --include "int8/*" --local-dir ./zonos2-mlx-weights
-python scripts/zonos2_cli.py --quant int8 \
+python scripts/zonos2_cli.py --model-dir ./zonos2-mlx-weights/int8 \
     --text "The quick brown fox jumps over the lazy dog." \
     --ref ref.wav --out out.wav
 
-# int4 (~5.4 GB) — fits 16 GB Macs; same flow, swap the folder + flag:
+# int4 (~5.7 GB) — fits 16 GB Macs; same flow, swap the folder:
 hf download shraey/zonos2-mlx --include "int4/*" --local-dir ./zonos2-mlx-weights
-python scripts/zonos2_cli.py --quant int4 --text "Hello there." --ref ref.wav --out out.wav
+python scripts/zonos2_cli.py --model-dir ./zonos2-mlx-weights/int4 \
+    --text "Hello there." --ref ref.wav --out out.wav
 ```
 
-> **Heads-up — the shared assets.** The CLI auto-wires the tier-independent **`dac_44khz/`** codec and **`speaker_encoder/`** from the bf16 folder (they aren't part of the quantized trunk). When you pull a single tier with `--include`, also grab those — or just download the whole repo:
->
-> ```bash
-> hf download shraey/zonos2-mlx --repo-type model --local-dir weights/
-> ```
+`--ref` enrolment needs the `[oracle]` extra (torchaudio for the mel); a cached `--profile` does not. To grab all tiers at once, drop the `--include` filter.
 
-**Tiers** (each is a self-contained folder `bf16/`, `int8/`, `int4/`):
+**Tiers** (each HF folder `bf16/`, `int8/`, `int4/` is self-contained — trunk + `dac_44khz/` + `speaker_encoder/`):
 
-| Folder | what's quantized | on-disk | peak RAM | target Macs |
+| Folder | what's quantized | folder size | peak RAM | target Macs |
 |---|---|---|---|---|
-| `bf16/` | nothing (reference) | 14 GB | ~44 GB | 64 GB |
-| `int8/` | attention/FFN/lm_head + experts int8; router/embeddings/norms bf16 | 7.6 GB | ~13 GB | 32 GB |
-| `int4/` | attention/FFN/lm_head int8; experts gate/up int4, down int8; router/embeddings/norms bf16 | 5.4 GB | ~10.6 GB | 16 GB |
+| `bf16/` | nothing (reference) | ~14 GB | ~44 GB | 64 GB |
+| `int8/` | attention/FFN/lm_head + experts int8; router/embeddings/norms bf16 | ~7.9 GB | ~13 GB | 32 GB |
+| `int4/` | attention/FFN/lm_head int8; experts gate/up int4, down int8; router/embeddings/norms bf16 | ~5.7 GB | ~10.6 GB | 16 GB |
+
+<sub>Folder size includes the bundled ~315 MB DAC codec + ECAPA speaker encoder (shared, identical across tiers — Hugging Face Xet de-dups them).</sub>
 
 The MoE experts (the bulk of the 8B) carry the int4; the **router/gate**, the **`lm_head`**, and the sensitive expert **`down`** projection stay int8/bf16 — the MoE-quant recipe that keeps the model intact (details in [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md)). All three tiers produce **full, intelligible audio**. They're equal options — pick by the RAM you have.
 
@@ -215,7 +214,8 @@ The authors and contributors disclaim responsibility for misuse. Comply with all
 
 This is a derivative port. The original model and the components it builds on are each independently licensed:
 
-- **ZONOS2** — **Apache-2.0**, © **[Zyphra](https://www.zyphra.com/)**. The 8B-MoE model, the DAC 44.1 kHz codec, and the ECAPA-TDNN speaker encoder are by Zyphra. [Code](https://github.com/Zyphra/ZONOS2)
+- **ZONOS2** — **Apache-2.0**, © **[Zyphra](https://www.zyphra.com/)**. The 8B-MoE model, the DAC 44.1 kHz codec, and the speaker encoder are by Zyphra. [Code](https://github.com/Zyphra/ZONOS2)
+- **Released checkpoint** — this port converts the **`drbaph/ZONOS2-BF16`** release, whose speaker encoder is an **ECAPA-TDNN** (2048-d). Note: Zyphra's current upstream HEAD wraps a different (Qwen3-style) speaker path — so this port tracks *that BF16 release*, not necessarily HEAD. The trunk, DAC codec, and AR math are the same model.
 - **Porting oracle** — the clean plain-torch [Zonos2_TTS-ComfyUI](https://github.com/Saganaki22/Zonos2_TTS-ComfyUI) fork by **Saganaki22** (Apache-2.0), vendored read-only under `scripts/zonos2_oracle/zonos2_ref/` and used as the op-for-op reference for this port.
 - **MLX** — Apple's [ml-explore/mlx](https://github.com/ml-explore/mlx).
 

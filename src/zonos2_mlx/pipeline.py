@@ -85,6 +85,7 @@ def synthesize(
     model: Zonos2Model | None = None,
     weights_dir: str = "weights/zonos2-bf16",
     dac_dir: str | None = None,
+    speaker_dir: str | None = None,
     greedy: bool = True,
     seed: int = 0,
     max_new_tokens: int = 1024,
@@ -106,10 +107,14 @@ def synthesize(
     wdir = Path(weights_dir)
     if model is None:
         model = Zonos2Model.from_pretrained(str(wdir))
-        # Stash optional enrolment paths for the ref path.
+        # Stash optional enrolment paths for the ``ref=`` path. The LDA tensors
+        # live in the trunk under either key (from_dit is key-robust), so the
+        # selected tier's safetensors works even when quantized. The ECAPA
+        # speaker encoder is tier-independent: prefer an explicit ``speaker_dir``,
+        # else look beside the trunk (self-contained tier folder).
         st = sorted(wdir.glob("*.safetensors"))
         model._dit_safetensors = str(st[0]) if st else None
-        spk_dir = wdir / "speaker_encoder"
+        spk_dir = Path(speaker_dir) if speaker_dir else (wdir / "speaker_encoder")
         model._speaker_encoder_dir = str(spk_dir) if spk_dir.exists() else None
 
     cfg = model.cfg

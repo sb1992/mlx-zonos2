@@ -322,10 +322,24 @@ class SpeakerLDA:
 
         ``mx.load`` memory-maps, so the untouched 8B of DiT weights are never
         materialized — we eval only the two LDA tensors.
+
+        Accepts either key naming: the upstream bf16 checkpoint uses
+        ``speaker_lda_projection.*``; our converted/quantized checkpoints rename
+        it to ``speaker_lda.*`` (kept bf16 in every tier). Both resolve here so
+        enrolment works from any tier's trunk.
         """
         raw = mx.load(str(dit_safetensors_path))
-        weight = raw["speaker_lda_projection.weight"].astype(mx.float32)
-        bias = raw["speaker_lda_projection.bias"].astype(mx.float32)
+        if "speaker_lda_projection.weight" in raw:
+            wkey, bkey = "speaker_lda_projection.weight", "speaker_lda_projection.bias"
+        elif "speaker_lda.weight" in raw:
+            wkey, bkey = "speaker_lda.weight", "speaker_lda.bias"
+        else:
+            raise KeyError(
+                f"no speaker LDA projection (speaker_lda_projection.* / speaker_lda.*) "
+                f"in {dit_safetensors_path}"
+            )
+        weight = raw[wkey].astype(mx.float32)
+        bias = raw[bkey].astype(mx.float32)
         mx.eval(weight, bias)
         return cls(weight, bias)
 
@@ -343,13 +357,22 @@ class SpeakerProfile:
 
     @staticmethod
     def save(path: Union[str, Path], lda_vec_np: np.ndarray, model_compat_hash: str) -> None:
-        """Persist the LDA vector + a model-compat string as an ``.npz``."""
+        """Persist the LDA vector + a model-compat string to EXACTLY ``path``.
+
+        ``np.savez`` appends ``.npz`` when handed a filename; writing through an
+        open file handle suppresses that, so ``save("voice.zonos")`` produces
+        ``voice.zonos`` (not ``voice.zonos.npz``). It is an npz container
+        regardless of the extension.
+        """
         lda = np.asarray(lda_vec_np, dtype=np.float32).reshape(-1)
-        np.savez(str(path), lda=lda, compat=np.asarray(str(model_compat_hash)))
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "wb") as fh:
+            np.savez(fh, lda=lda, compat=np.asarray(str(model_compat_hash)))
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "SpeakerProfile":
-        """Load a saved profile. Accepts a ``.npz`` (handles auto-suffixing)."""
+        """Load a saved profile. Falls back to ``<path>.npz`` for older saves."""
         path = str(path)
         if not Path(path).exists() and not path.endswith(".npz"):
             path = path + ".npz"

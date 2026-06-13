@@ -1,8 +1,16 @@
 from pathlib import Path
 
+import pytest
+
 from zonos2_mlx.config import Zonos2Config
 
 _ROOT = Path(__file__).resolve().parent.parent
+
+# Reads the dumped oracle config fixture (gitignored) — skip on a fresh clone.
+pytestmark = pytest.mark.skipif(
+    not (_ROOT / "outputs/fixtures/config.json").exists(),
+    reason="needs outputs/fixtures/config.json (oracle fixture)",
+)
 
 
 def test_config_core():

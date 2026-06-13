@@ -3,7 +3,10 @@
 CPU-only (pure stdlib + numpy). No torch, no mlx.
 """
 
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from zonos2_mlx.config import Zonos2Config
 from zonos2_mlx.textnorm import (
@@ -14,7 +17,13 @@ from zonos2_mlx.textnorm import (
     text_to_byte_ids,
 )
 
+_ROOT = Path(__file__).resolve().parent.parent
 
+
+@pytest.mark.skipif(
+    not (_ROOT / "outputs/fixtures/prompt_ids.npy").exists(),
+    reason="needs the oracle build_prompt fixtures (gitignored)",
+)
 def test_prompt_matches_oracle():
     c = Zonos2Config.load("outputs/fixtures/config.json")
     ids, pos = build_prompt(

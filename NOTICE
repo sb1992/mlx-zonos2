@@ -6,9 +6,13 @@ This product is a pure-MLX reimplementation of inference for Zyphra ZONOS2.
 It includes/derives from the following Apache-2.0 works:
 
 - ZONOS2 (Zyphra) — the 8B MoE autoregressive TTS model, DAC 44.1 kHz codec,
-  and ECAPA-TDNN speaker encoder whose weights this project converts and
-  quantizes. Model and weights © Zyphra, licensed under Apache-2.0.
+  and speaker encoder whose weights this project converts and quantizes. Model
+  and weights © Zyphra, licensed under Apache-2.0.
   https://github.com/Zyphra/ZONOS2
+  This port converts the `drbaph/ZONOS2-BF16` release specifically, whose
+  speaker encoder is an ECAPA-TDNN (2048-d). Zyphra's current upstream HEAD
+  wraps a different (Qwen3-style) speaker path; this port tracks the BF16
+  release, not necessarily HEAD.
 
 - Zonos2_TTS-ComfyUI (Saganaki22) — the clean plain-PyTorch reference used as
   the porting oracle (vendored read-only under

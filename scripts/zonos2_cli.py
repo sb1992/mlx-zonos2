@@ -99,7 +99,14 @@ def main() -> int:
         "--quant",
         choices=tuple(_TIER_DIRS),
         default="int8",
-        help="Quant tier (bf16/int8/int4). Default: int8.",
+        help="Quant tier (bf16/int8/int4). Default: int8. Ignored if --model-dir is set.",
+    )
+    ap.add_argument(
+        "--model-dir",
+        default=None,
+        help="A self-contained MLX weights folder — e.g. one tier of an `hf "
+        "download shraey/zonos2-mlx` (trunk safetensors + dac_44khz/ + "
+        "speaker_encoder/). Overrides --quant; point it at your download.",
     )
     ap.add_argument(
         "--speaking-rate",
@@ -143,12 +150,21 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    weights_dir = str(_REPO / _TIER_DIRS[args.quant])
-    bf16_dir = _REPO / _BF16_DIR
-    # Quantized dirs ship only the trunk; DAC + speaker encoder are tier-independent.
-    dac_dir = str(bf16_dir / "dac_44khz")
-    speaker_dir = str(bf16_dir / "speaker_encoder")
-    dit_path = str(next(bf16_dir.glob("*.safetensors")))
+    if args.model_dir:
+        # Self-contained tier folder (an HF download): trunk + dac_44khz +
+        # speaker_encoder all live here. The LDA tensors are in the trunk
+        # (from_dit accepts the quantized key too).
+        adir = Path(args.model_dir).expanduser()
+        weights_dir = str(adir)
+        assets_dir = adir
+    else:
+        # Dev layout: weights/zonos2-<tier> trunk; shared DAC + speaker encoder
+        # live in the bf16 dir (the quant dirs ship only the trunk).
+        weights_dir = str(_REPO / _TIER_DIRS[args.quant])
+        assets_dir = _REPO / _BF16_DIR
+    dac_dir = str(assets_dir / "dac_44khz")
+    speaker_dir = str(assets_dir / "speaker_encoder")
+    dit_path = str(next(Path(weights_dir).glob("*.safetensors")))
 
     # --- resolve the speaker LDA vector ---
     if args.ref is not None:
@@ -158,8 +174,9 @@ def main() -> int:
         speaker_lda = prof.lda.reshape(1, -1)
         print(f"  loaded profile {args.profile} (compat={prof.compat})")
 
+    tier_label = f"model-dir={args.model_dir}" if args.model_dir else f"quant={args.quant}"
     print(
-        f"[zonos2] quant={args.quant} weights={weights_dir} "
+        f"[zonos2] {tier_label} weights={weights_dir} "
         f"accurate_mode={args.accurate_mode} greedy={args.greedy}"
     )
 
@@ -169,6 +186,7 @@ def main() -> int:
         speaker_lda=speaker_lda,
         weights_dir=weights_dir,
         dac_dir=dac_dir,
+        speaker_dir=speaker_dir,
         greedy=args.greedy,
         seed=args.seed,
         max_new_tokens=args.max_new_tokens,

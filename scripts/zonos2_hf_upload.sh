@@ -42,28 +42,28 @@ for f in \
   [ -e "$f" ] || { echo "MISSING: $f" >&2; exit 1; }
 done
 
-# --- assemble the upload folder layout ---------------------------------------
-# Symlink the big safetensors (don't duplicate ~30 GB on disk); copy the small
-# json/config so the staged tree is self-describing. hf resolves symlinks.
+# --- assemble the upload folder layout (each tier is SELF-CONTAINED) ----------
+# Clean tier folders `bf16/ int8/ int4/`, each runnable on its own. The big
+# trunk safetensors are symlinked (don't duplicate ~27 GB locally; hf + Xet
+# resolve symlinks). The small DAC codec + ECAPA speaker encoder (~315 MB, only
+# present in the bf16 source dir) are copied into EVERY tier so a single-tier
+# download is self-sufficient; Xet content-dedups the identical copies.
 echo "Staging upload tree at: ${STAGE}"
 rm -rf "${STAGE}"
-mkdir -p "${STAGE}/zonos2-bf16" "${STAGE}/zonos2-int8" "${STAGE}/zonos2-int4"
 
-# bf16 tier (trunk + the tier-independent dac + speaker encoder live here)
-ln -sf "${BF16_DIR}/zonos2-bf16.safetensors" "${STAGE}/zonos2-bf16/zonos2-bf16.safetensors"
-cp -f  "${BF16_DIR}/config.json"             "${STAGE}/zonos2-bf16/config.json"
-cp -Rf "${BF16_DIR}/dac_44khz"               "${STAGE}/zonos2-bf16/dac_44khz"
-cp -Rf "${BF16_DIR}/speaker_encoder"         "${STAGE}/zonos2-bf16/speaker_encoder"
+stage_tier () {  # $1=tier (bf16/int8/int4)  $2=source dir  $3=trunk filename
+  local tier="$1" src="$2" trunk="$3" dst="${STAGE}/$1"
+  mkdir -p "${dst}"
+  ln -sf "${src}/${trunk}"    "${dst}/${trunk}"
+  cp -f  "${src}/config.json" "${dst}/config.json"
+  [ -e "${src}/quant_config.json" ] && cp -f "${src}/quant_config.json" "${dst}/quant_config.json"
+  cp -Rf "${BF16_DIR}/dac_44khz"       "${dst}/dac_44khz"
+  cp -Rf "${BF16_DIR}/speaker_encoder" "${dst}/speaker_encoder"
+}
 
-# int8 tier (trunk + quant recipe)
-ln -sf "${INT8_DIR}/zonos2-int8.safetensors" "${STAGE}/zonos2-int8/zonos2-int8.safetensors"
-cp -f  "${INT8_DIR}/config.json"             "${STAGE}/zonos2-int8/config.json"
-cp -f  "${INT8_DIR}/quant_config.json"       "${STAGE}/zonos2-int8/quant_config.json"
-
-# int4 tier (trunk + quant recipe)
-ln -sf "${INT4_DIR}/zonos2-int4.safetensors" "${STAGE}/zonos2-int4/zonos2-int4.safetensors"
-cp -f  "${INT4_DIR}/config.json"             "${STAGE}/zonos2-int4/config.json"
-cp -f  "${INT4_DIR}/quant_config.json"       "${STAGE}/zonos2-int4/quant_config.json"
+stage_tier bf16 "${BF16_DIR}" zonos2-bf16.safetensors
+stage_tier int8 "${INT8_DIR}" zonos2-int8.safetensors
+stage_tier int4 "${INT4_DIR}" zonos2-int4.safetensors
 
 # model card = the repo README (HF renders README.md as the model card)
 cp -f "${ROOT}/README.md" "${STAGE}/README.md"
