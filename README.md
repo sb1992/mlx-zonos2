@@ -1,186 +1,226 @@
 # zonos2-mlx
 
-A pure-[MLX](https://github.com/ml-explore/mlx) port of Zyphra's **ZONOS2 8B-MoE**
-text-to-speech model, running natively on Apple Silicon. Clone a voice from a few
-seconds of reference audio and synthesize speech entirely on-device — no PyTorch
-at inference time.
+A pure-[MLX](https://github.com/ml-explore/mlx) port of Zyphra's [**ZONOS2**](https://github.com/Zyphra/ZONOS2) — an **8B-parameter Mixture-of-Experts** autoregressive text-to-speech model — running natively on Apple Silicon.
 
-- **8B DiT** with a 16-expert top-1 MoE (layers 3–26), ECAPA-TDNN speaker
-  conditioning, and the DAC 44.1 kHz neural codec.
-- **Pure-MLX engine** (`src/zonos2_mlx/*` imports no torch). torchaudio is used
-  only in `scripts/` for the optional reference-enrolment mel front-end.
-- **Three weight tiers** — bf16 (64 GB Macs), int8 (~13 GB), int4-ship (~10.6 GB,
-  runs on 16 GB Macs). All three produce full intelligible audio.
+ZONOS2 is a **16-expert, top-1 MoE** AR model (layer 26 routes top-2), paired with a DAC 44.1 kHz neural codec and an ECAPA-TDNN speaker encoder. It clones a voice from a few seconds of reference audio and synthesizes 44.1 kHz speech. This repo is a clean-room MLX reimplementation of the **inference runtime** — no PyTorch in the inference path — gated per-stage against the original model.
 
----
+> **Ready-to-run weights** are published on Hugging Face — [`shraey/zonos2-mlx`](https://huggingface.co/shraey/zonos2-mlx). **Download and run — no PyTorch and no conversion step.** Three precision tiers ship (`bf16` / `int8` / `int4`); the quantized builds shrink the 14 GB bf16 trunk to **7.6 GB (int8)** or **5.4 GB (int4)**. `uv sync` the runtime, `hf download` the weights, and go — see [Weights](#weights).
+
+## What it is
+
+- **Architecture:** an 8B autoregressive MoE trunk (16 experts, top-1; layer 26 top-2) → multi-codebook audio tokens → the **DAC 44.1 kHz** neural codec for the waveform. An **ECAPA-TDNN** speaker encoder (+ an LDA projection) conditions the speaker identity.
+- **Zero-shot voice clone:** one reference clip clones the voice — enroll it once into a `.zonos` profile, or pass `--ref` to enroll on the fly.
+- **Pure-MLX runtime:** nothing in `src/zonos2_mlx/*` imports torch; the inference math is all MLX. `torchaudio` appears only in `scripts/` for the reference-enrollment mel front-end (and the dev parity oracle).
+- **CLI + Python API:** a `scripts/zonos2_cli.py` front-end and `from zonos2_mlx import synthesize`.
+
+## Scope — what this is / isn't
+
+This is a **converted-weight MLX inference runtime** for ZONOS2. It deliberately does **not** replicate upstream's full surface. It **is**:
+
+- a from-scratch MLX port of the ZONOS2 inference math, numerically gated against the original PyTorch model (the porting oracle is the clean plain-torch ComfyUI fork, vendored read-only under `scripts/zonos2_oracle/zonos2_ref/`);
+- a CLI + Python API that synthesizes from a **local, already-converted** weights directory;
+- a small **runtime addition not present upstream**: [enroll a voice once](#enroll-once-reuse-a-voice) into a `.zonos` profile and reuse it, so the reference encode is paid once.
+
+It is **not** a drop-in replacement for the upstream package. In particular, this runtime:
+
+- **points at a local converted directory** — there is no HF hub fetch baked into the runtime (you `hf download` the weights yourself, then point `--quant` at them);
+- **decodes greedily by default** — greedy (temperature 0) is the parity path; `--sample` selects the stochastic oracle sampler;
+- **does inference only** — no fine-tuning or training.
+
+If you need anything outside that, use the upstream project: [Zyphra/ZONOS2](https://github.com/Zyphra/ZONOS2).
 
 ## Install
 
-The engine deps are MLX + numpy + safetensors + soundfile. The `[oracle]` extra
-(torch/torchaudio/transformers) is needed **only** to dump reference fixtures or
-to enrol a voice from raw audio via `--ref`.
+Requires Python ≥ 3.12 on Apple Silicon (MLX is Metal-only). This repo uses [uv](https://github.com/astral-sh/uv).
 
 ```bash
-# engine only (synthesize from a pre-enrolled .zonos profile)
+git clone https://github.com/sb1992/mlx-zonos2.git
+cd mlx-zonos2
+
+# engine only — synthesize from a cached .zonos profile
 uv sync
 
-# + the oracle/enrol extras (torchaudio mel for --ref, or fixture regeneration)
+# + the [oracle] extra — torch/torchaudio/transformers, needed ONLY to enroll a
+# voice from raw audio (--ref) or to regenerate the dev parity fixtures
 uv sync --extra oracle
 ```
 
-Weights go under `weights/` (see [Weight tiers](#weight-tiers)).
+The runtime deps are `mlx`, `numpy`, `safetensors`, `soundfile`. The `[oracle]` extra (`torch`, `torchaudio`, `transformers`, …) is needed **only** for two things — don't conflate them:
 
----
+- **Enrolling from raw audio** (`--ref` on the CLI, or `scripts/zonos2_enroll.py`) needs `torchaudio` for the mel front-end. Once a voice is enrolled into a `.zonos` profile, generation from `--profile` is **pure-MLX** and needs no extra.
+- **Regenerating parity fixtures** (the dev oracle under `scripts/zonos2_oracle/`) needs the full extra to dump reference tensors from the original PyTorch model.
 
-## Usage
+## Weights
 
-### Enrol a voice (once)
+Two ways to get runnable MLX weights — **most people want Option A.**
 
-`--ref` takes any audio clip and caches a 1024-d LDA speaker vector as a `.zonos`
-profile (torchaudio mel → MLX ECAPA-TDNN → LDA; identical to the oracle path):
+### Option A — download ready MLX weights (recommended)
+
+Pre-converted, pre-quantized MLX weights are published at [`shraey/zonos2-mlx`](https://huggingface.co/shraey/zonos2-mlx). **No PyTorch, no conversion** — download the tier you want and point the CLI at it:
 
 ```bash
-uv run python scripts/zonos2_enroll.py \
-    --ref outputs/fixtures/ref.wav \
-    --out outputs/voices/myvoice.zonos
+# int8 (~7.6 GB) — the balanced tier
+hf download shraey/zonos2-mlx --include "int8/*" --local-dir ./zonos2-mlx-weights
+python scripts/zonos2_cli.py --quant int8 \
+    --text "The quick brown fox jumps over the lazy dog." \
+    --ref ref.wav --out out.wav
+
+# int4 (~5.4 GB) — fits 16 GB Macs; same flow, swap the folder + flag:
+hf download shraey/zonos2-mlx --include "int4/*" --local-dir ./zonos2-mlx-weights
+python scripts/zonos2_cli.py --quant int4 --text "Hello there." --ref ref.wav --out out.wav
 ```
 
-### Synthesize
+> **Heads-up — the shared assets.** The CLI auto-wires the tier-independent **`dac_44khz/`** codec and **`speaker_encoder/`** from the bf16 folder (they aren't part of the quantized trunk). When you pull a single tier with `--include`, also grab those — or just download the whole repo:
+>
+> ```bash
+> hf download shraey/zonos2-mlx --repo-type model --local-dir weights/
+> ```
 
-The CLI mirrors the dots/miso flag style. Give it `--text`, exactly one speaker
-source (`--ref` to enrol on the fly, or `--profile` for a cached `.zonos`), an
-`--out` wav, and a `--quant` tier:
+**Tiers** (each is a self-contained folder `bf16/`, `int8/`, `int4/`):
+
+| Folder | what's quantized | on-disk | peak RAM | target Macs |
+|---|---|---|---|---|
+| `bf16/` | nothing (reference) | 14 GB | ~44 GB | 64 GB |
+| `int8/` | attention/FFN/lm_head + experts int8; router/embeddings/norms bf16 | 7.6 GB | ~13 GB | 32 GB |
+| `int4/` | attention/FFN/lm_head int8; experts gate/up int4, down int8; router/embeddings/norms bf16 | 5.4 GB | ~10.6 GB | 16 GB |
+
+The MoE experts (the bulk of the 8B) carry the int4; the **router/gate**, the **`lm_head`**, and the sensitive expert **`down`** projection stay int8/bf16 — the MoE-quant recipe that keeps the model intact (details in [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md)). All three tiers produce **full, intelligible audio**. They're equal options — pick by the RAM you have.
+
+### Option B — convert / quantize from source (advanced)
+
+For reproducibility, re-quantizing, or auditing, build the tiers yourself from the bf16 trunk (the quantizer needs only `mlx` — no torch):
 
 ```bash
-# enrol + synthesize at int8
-uv run python scripts/zonos2_cli.py \
+# int8 — everything int8 (the conservative reference tier)
+python -m zonos2_mlx.quantize --weights-dir weights/zonos2-bf16 \
+    --tier int8 --out weights/zonos2-int8/zonos2-int8.safetensors
+
+# int4 — int8 linears + int8 expert-down, int4 expert gate/up
+python -m zonos2_mlx.quantize --weights-dir weights/zonos2-bf16 \
+    --tier int4 --out weights/zonos2-int4/zonos2-int4.safetensors
+```
+
+`--tier` writes a `quant_config.json` sidecar beside the safetensors; the loader globs `*.safetensors` and reads the sidecar, so nothing changes at the CLI/API level. (The per-projection knobs `--bits` / `--expert-gate-up-bits` / `--expert-down-bits` are exposed for experiments.) Staging the three-tier upload tree is in `scripts/zonos2_hf_upload.sh`.
+
+## CLI usage
+
+```bash
+python scripts/zonos2_cli.py \
     --text "The quick brown fox jumps over the lazy dog." \
-    --ref outputs/fixtures/ref.wav \
+    --ref ref.wav \
     --out outputs/cli/fox.wav \
     --quant int8
-
-# reuse a cached profile at the int4 ship tier (16 GB Macs)
-uv run python scripts/zonos2_cli.py \
-    --text "Hello there." \
-    --profile outputs/voices/myvoice.zonos \
-    --out outputs/cli/hello.wav \
-    --quant int4
-
-# full-precision bf16 (64 GB Macs)
-uv run python scripts/zonos2_cli.py \
-    --text "Top quality, please." \
-    --profile outputs/voices/myvoice.zonos \
-    --out outputs/cli/top.wav \
-    --quant bf16
+# -> outputs/cli/fox.wav  (44.1 kHz)
 ```
 
-Useful flags: `--speaking-rate <0..7|-1>`, `--accurate-mode` / `--expressive`,
-`--seed`, `--max-new-tokens`, `--sample` (stochastic; default is greedy/parity).
+Key flags:
 
-Programmatic use:
+- `--text` — the text to synthesize (required).
+- `--ref <audio>` **or** `--profile <voice.zonos>` (exactly one) — `--ref` enrolls a reference clip on the fly (needs the `[oracle]` extra for the mel); `--profile` reuses a cached `.zonos` voice (pure-MLX).
+- `--out <wav>` — output path (required).
+- `--quant {bf16,int8,int4}` — precision tier (default `int8`).
+- `--speaking-rate <0..7|-1>` — speaking-rate bucket, or `-1` (unset, the default).
+- `--accurate-mode` (default) / `--expressive` — accurate-mode token on/off.
+- `--seed <n>` — sampling seed (only affects `--sample`; greedy is deterministic).
+- `--max-new-tokens <n>` — AR decode cap in frames (default 1024).
+- `--sample` — stochastic sampling (the oracle's `SamplingOptions`); default is greedy (the parity path).
+
+## Python API
 
 ```python
-from zonos2_mlx.pipeline import synthesize
+from zonos2_mlx import synthesize
 
 res = synthesize(
     "The quick brown fox jumps over the lazy dog.",
     profile="outputs/voices/myvoice.zonos",
     weights_dir="weights/zonos2-int8",
-    dac_dir="weights/zonos2-bf16/dac_44khz",  # DAC is tier-independent
+    dac_dir="weights/zonos2-bf16/dac_44khz",   # DAC + speaker encoder are tier-independent
     out_wav="outputs/cli/fox.wav",
 )
-print(res.wav.shape, res.eos_frame)
+
+print(res.wav.shape, res.sample_rate, res.eos_frame)   # (1, samples), 44100, <eos frame>
 ```
 
----
+`synthesize(...)` takes exactly one speaker source — `profile=` (a cached `.zonos`), `ref=` (a precomputed log-mel array), or `speaker_lda=` (a 1024-d vector) — plus `greedy=` (default `True`, the parity path), `seed=`, `max_new_tokens=`, and the oracle sampling `**knobs`.
 
-## Weight tiers
+## Enroll once, reuse a voice
 
-The quantized dirs ship only the trunk safetensors; the **DAC codec** and
-**speaker encoder** are tier-independent and always come from the bf16 dir (the
-CLI wires this for you).
-
-| Tier | dir | size | peak RAM | target Macs | HF location |
-|---|---|---|---|---|---|
-| bf16 | `weights/zonos2-bf16` | 14 GB | ~44 GB | 64 GB | `shraey/zonos2-mlx` → `zonos2-bf16/` |
-| int8 | `weights/zonos2-int8` | 7.6 GB | ~13 GB | 32 GB | `shraey/zonos2-mlx` → `zonos2-int8/` |
-| int4-ship | `weights/zonos2-int4-ship` | 5.4 GB | ~10.6 GB | 16 GB | `shraey/zonos2-mlx` → `zonos2-int4-ship/` |
-
-Download (after `hf auth login`):
+Compute a voice's speaker conditioning **once**, save it to a small `.zonos` profile, and reuse it for every later generation — so you never re-pass (or re-encode) the reference. The enroll path runs the torchaudio mel → MLX ECAPA-TDNN → LDA projection (identical to the parity oracle's path); generation from the profile is then pure-MLX.
 
 ```bash
-hf download shraey/zonos2-mlx --repo-type model --local-dir weights/
+# 1. enroll a reference voice -> a reusable .zonos profile
+python scripts/zonos2_enroll.py --ref ref.wav --out outputs/voices/alice.zonos
+
+# 2. generate from the profile — no --ref (and no torchaudio) needed
+python scripts/zonos2_cli.py --profile outputs/voices/alice.zonos \
+    --text "Hello from the enrolled voice." --out outputs/cli/hello.wav --quant int8
 ```
 
-Uploading the weights (maintainers) is staged in `scripts/zonos2_hf_upload.sh`.
+```python
+from zonos2_mlx.speaker import SpeakerProfile
+profile = SpeakerProfile.load("outputs/voices/alice.zonos")
+res = synthesize("Hello from the enrolled voice.", profile=profile,
+                 weights_dir="weights/zonos2-int8",
+                 dac_dir="weights/zonos2-bf16/dac_44khz", out_wav="hello.wav")
+```
 
----
+A profile carries the 1024-d LDA speaker vector and is **portable across tiers** — enroll once, generate at bf16 / int8 / int4.
 
-## Parity methodology
+## How it was ported / parity
 
-The port is validated **component-by-component** against a vendored plain-PyTorch
-reference (`scripts/zonos2_oracle/`), dumped on MPS/bf16. Each task has a gate:
+Every stage was gated numerically against the original PyTorch model (a dev-only oracle under `scripts/zonos2_oracle/` dumps reference fixtures on MPS/bf16) before any behavioral test:
 
-- **MoE trunk (T2):** per-token median cosine ≥0.999 vs the oracle + last-position
-  multi-codebook argmax byte-exact.
-- **DAC decoder (T3):** waveform PSNR **73.07 dB** (sample-exact).
-- **Speaker (T4):** ECAPA x-vector cosine ≈1.0, LDA projection 0.9997.
-- **Text frontend (T5):** `build_prompt` tensor byte-exact.
-- **KV cache (T6):** cached vs full-forward cosine ≥0.9999, argmax exact.
+| Stage | Metric | Result |
+|---|---|---|
+| MoE trunk (per-layer hidden) | cosine vs torch oracle | ≥0.999 |
+| MoE trunk (final logits, last pos) | greedy argmax | byte-exact |
+| DAC 44.1 kHz decode | PSNR vs torch | 73.07 dB |
+| ECAPA speaker embedding | cosine | 1.0000 |
+| Speaker LDA projection | cosine | 0.9997 |
+| Text `build_prompt` | token ids | byte-exact |
+| KV-cache (prefill vs step) | cosine | ≥0.9999 |
 
-**The AR trunk is gated teacher-forced + by-ear**, not by free-running
-cross-framework token-match. On this 8B **top-1** MoE, a few tokens sit on a
-router knife-edge where MPS-bf16 and Metal-bf16 round the gate logits just
-differently enough to pick a different expert; greedy decoding compounds each flip,
-so the free-running cross-framework code-match is inherently ~0.03 — a property of
-the model class, **not** a port bug (the KV cache, argmax, and per-component parity
-are all proven independently, and fp32 doesn't help — bf16 is the
-oracle-matching dtype). Teacher forcing removes the divergence confound and gives
-**frame-0 all-9 argmax exact** + per-codebook agreement **0.872**. The free-running
-render was approved by ear (a good clone — same words, same voice).
+**Why the end-to-end gate is teacher-forced + by-ear, not free-running token-match.** The AR trunk is gated **teacher-forced and by ear**, not by free-running cross-framework code-match. On an 8B **top-1** MoE, a few tokens sit on a routing knife-edge where MLX-Metal-bf16 and the PyTorch-MPS-bf16 oracle legitimately round the gate logits differently enough to pick a *different* expert. Under free-running greedy decoding each such flip compounds, so the end-to-end code-match is inherently low (~0.03) — even though the port is numerically correct: **frame-0 all-9 argmax is exact**, and **teacher-forced per-codebook agreement is 0.872**. This is a cross-framework runtime-precision property of the model class, **not** a port bug (fp32 doesn't fix it — bf16 is the oracle-matching dtype; the KV cache, argmax, and per-component parity are all proven independently). The component gates prove the math; teacher-forced + by-ear prove the product.
 
-Full numbers: [`docs/research/01-port-results.md`](docs/research/01-port-results.md).
-Oracle notes: [`docs/research/00-oracle-notes.md`](docs/research/00-oracle-notes.md).
-MoE-quant recipe: [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md).
-
-### Tests
+Tests live in `tests/` (pytest). The CPU set runs without weights; the GPU parity gates need the trunk weights + fixtures and run serially:
 
 ```bash
 uv run pytest -q -m "not gpu"   # CPU suite (fast; no GPU, no 8B inference)
-uv run pytest -q -m gpu         # GPU parity gates (need weights + fixtures, run serial)
+uv run pytest -q -m gpu         # GPU parity gates (need weights + fixtures)
 ```
 
----
+Full numbers: [`docs/research/01-port-results.md`](docs/research/01-port-results.md). MoE-quant recipe: [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md).
 
-## Quantization
+## Requirements & notes
 
-The int8 and int4-ship tiers use a **MoE-aware recipe** (the expert quantization
-matches mlx-lm's `QuantizedSwitchLinear`/`gather_qmm` exactly; the non-expert path
-is the sensitive one). Highlights:
+These are specifics of *this MLX port* — not limitations of the model itself, which behaves the same as upstream ZONOS2.
 
-- Router (down_proj, mlp, balancing biases, EDA states-scale/rmsnorm): **bf16** —
-  a top-1 router is a knife-edge.
-- Attention + dense-FFN linears: **int8** (they feed the recurrent router state).
-- Experts gate/up (the memory bulk): **int4**; expert down-proj + `lm_head`:
-  **int8** (protects the EOA logit + the residual write-back).
-- Embeddings + all RMSNorm: **bf16**.
+- **Apple Silicon only** — MLX is Metal-only (the upstream PyTorch model targets CUDA/MPS).
+- **Speed:** ~**1.06 s per audio-second** at int8 (greedy, M5 Max).
+- **Footprint:** peak RAM is tier-dependent — ~44 GB (bf16, 64 GB Macs), ~13 GB (int8, 32 GB Macs), ~10.6 GB (int4, 16 GB Macs). All scripts and the pipeline set `mx.set_memory_limit(45 GB)` as a hard ceiling.
+- **Shared assets:** the DAC codec and speaker encoder are tier-independent and live in the bf16 folder; the CLI wires them automatically (see [Weights](#weights)).
 
-Tiers are gated on **per-layer hidden cosine + teacher-forced logit-KL +
-finite/non-silent audio + ear**, not on sampled-token agreement (which is a
-top-1 knife-edge with a ~0.85 noise floor). Measured: int8 KL 0.070, int4-ship KL
-0.202. See [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md).
+## Responsible use
 
----
+This runtime performs **zero-shot voice cloning** — it can reproduce a person's voice from a few seconds of reference audio. That capability carries real risk of misuse. By using this software you agree to use it responsibly:
 
-## License & attribution
+- **No impersonation, fraud, or disinformation.** Do not use cloned voices to impersonate real people without authorization, to commit fraud or social engineering, to evade voice-based authentication, or to produce misleading or deceptive content.
+- **Consent for reference audio.** Only clone a voice you own or for which you have the speaker's explicit, informed consent. Respect applicable privacy / publicity / data-protection laws in your jurisdiction.
+- **Disclose AI-generated audio.** Clearly label synthesized speech as AI-generated wherever it is published or shared, so listeners are never misled about its origin.
+- **Watermark + detect downstream.** You are encouraged to apply audio watermarking to generated output and to deploy synthetic-speech detection in any pipeline that ingests it, to support provenance and abuse mitigation.
 
-**Apache-2.0**, with attribution to **[Zyphra](https://www.zyphra.com/)** for the
-ZONOS2 model and weights. This is an independent MLX port.
+The authors and contributors disclaim responsibility for misuse. Comply with all applicable laws and with the upstream ZONOS2 / Zyphra usage terms.
 
-- **Model & weights:** ZONOS2 by Zyphra.
-- **Porting reference:** the [Zonos2_TTS-ComfyUI](https://github.com/Saganaki22/Zonos2_TTS-ComfyUI)
-  fork by **Saganaki22**, used as the op-for-op PyTorch reference for this port.
-- **MLX:** Apple's [ml-explore/mlx](https://github.com/ml-explore/mlx).
+## Attribution + licenses
 
-Use of the underlying ZONOS2 model is subject to Zyphra's model license; comply
-with their terms in addition to this repository's Apache-2.0 license.
+This is a derivative port. The original model and the components it builds on are each independently licensed:
+
+- **ZONOS2** — **Apache-2.0**, © **[Zyphra](https://www.zyphra.com/)**. The 8B-MoE model, the DAC 44.1 kHz codec, and the ECAPA-TDNN speaker encoder are by Zyphra. [Code](https://github.com/Zyphra/ZONOS2)
+- **Porting oracle** — the clean plain-torch [Zonos2_TTS-ComfyUI](https://github.com/Saganaki22/Zonos2_TTS-ComfyUI) fork by **Saganaki22** (Apache-2.0), vendored read-only under `scripts/zonos2_oracle/zonos2_ref/` and used as the op-for-op reference for this port.
+- **MLX** — Apple's [ml-explore/mlx](https://github.com/ml-explore/mlx).
+
+The MLX port code in this repository is licensed **Apache-2.0** (see [LICENSE](LICENSE) and [NOTICE](NOTICE)). You must comply with the upstream ZONOS2 license and usage terms for the model weights and any redistributed components.
+
+### Credit
+
+Full credit to **Zyphra** for the ZONOS2 model, its training, and the open release. This repo only re-expresses their runtime in MLX; the research, training, and weights are theirs.

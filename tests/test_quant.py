@@ -146,25 +146,25 @@ def test_quant_predicate_selects_only_intended_linears():
 #       token over the AUDIO region; gates against the recurrent-EDA COLLAPSE
 #       cliff — the old uniform-int4 bug was 0.03 by layer 3),
 #   (b) teacher-forced logit-KL (nats) vs bf16           -> int8 <= 0.1
-#       (near-lossless); the int4-gate/up ship tier trades fidelity for memory
+#       (near-lossless); the int4-gate/up int4 tier trades fidelity for memory
 #       and sits ~0.2, gated at <= 0.25,
 #   (d) full-length finite non-silent audio (NOT the int4-lm_head EOS collapse),
-#       + ship < 16 GB.
+#       + int4 < 16 GB.
 #
 # (c) logit top-1 agreement is NOT a hard gate (an EMPIRICAL correction to the
 # research's optimistic >= 0.95 prediction). The bf16 audio-code logits are
 # inherently FLAT — measured mean top-1 probability 0.31, and 84% of (frame,
 # codebook) distributions have top-1 prob < 0.5. On such near-tied distributions
 # ANY quantization noise reorders the argmax, so logit top-1 lands at the same
-# ~0.81 (int8) / ~0.66 (ship) as the discarded sampled-token metric — it is the
+# ~0.81 (int8) / ~0.66 (int4) as the discarded sampled-token metric — it is the
 # SAME router knife-edge measured on logits, not a softer signal. We record it
 # (and the informational sampled-token frac) as prints, but gate on KL, which is
 # the smooth distribution-overlap metric that DOES separate the tiers. Likewise
 # sampled-token agreement stays informational only.
 # ---------------------------------------------------------------------------
 _TRUNK_COSINE_FLOOR = 0.97
-_LOGIT_KL_CEIL = {"int8": 0.1, "ship": 0.25}
-_SHIP_TIERS = ("ship", "int8")
+_LOGIT_KL_CEIL = {"int8": 0.1, "int4": 0.25}
+_RELEASE_TIERS = ("int4", "int8")
 
 
 def _load_summary():
@@ -178,7 +178,7 @@ def _load_summary():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("tier", _SHIP_TIERS)
+@pytest.mark.parametrize("tier", _RELEASE_TIERS)
 def test_quant_eval_per_layer_cosine(tier):
     """(a) The hidden state must degrade GRADUALLY, not cliff. A healthy quant
     holds >= 0.97 through the trunk; the old uniform-int4 bug was 0.03 by layer 3.
@@ -196,10 +196,10 @@ def test_quant_eval_per_layer_cosine(tier):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("tier", _SHIP_TIERS)
+@pytest.mark.parametrize("tier", _RELEASE_TIERS)
 def test_quant_eval_logit_kl(tier):
     """(b) Teacher-forced mean per-frame logit-KL vs bf16 (nats). int8 is
-    near-lossless (<= 0.1); the int4-gate/up ship tier trades fidelity for memory
+    near-lossless (<= 0.1); the int4-gate/up int4 tier trades fidelity for memory
     (~0.2, gated <= 0.25). This is the smooth distribution-overlap metric (the
     one DWQ optimizes) and the gate that actually separates the tiers — unlike
     top-1, which collapses to the router knife-edge on the flat audio logits."""
@@ -214,7 +214,7 @@ def test_quant_eval_logit_kl(tier):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("tier", _SHIP_TIERS)
+@pytest.mark.parametrize("tier", _RELEASE_TIERS)
 def test_quant_eval_audio_full_length(tier):
     """(d) The tier must decode a full-length, finite, non-silent utterance —
     NOT the int4-lm_head immediate-EOS 0.03s collapse."""
@@ -231,10 +231,10 @@ def test_quant_eval_audio_full_length(tier):
 
 
 @pytest.mark.gpu
-def test_quant_eval_ship_fits_16gb():
-    """The ship (int4 gate/up) tier must hit the < 16 GB footprint goal."""
+def test_quant_eval_int4_fits_16gb():
+    """The int4 (int4 gate/up) tier must hit the < 16 GB footprint goal."""
     summary = _load_summary()
-    if "ship" not in summary:
-        pytest.skip("ship tier not in summary")
-    peak = summary["ship"]["phys_footprint_peak_gb"]
-    assert peak < 16.0, f"ship tier phys_footprint_peak {peak:.2f} GB >= 16 GB"
+    if "int4" not in summary:
+        pytest.skip("int4 tier not in summary")
+    peak = summary["int4"]["phys_footprint_peak_gb"]
+    assert peak < 16.0, f"int4 tier phys_footprint_peak {peak:.2f} GB >= 16 GB"

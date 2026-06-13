@@ -10,11 +10,11 @@ Linears and yields almost no memory win. To actually cut the footprint we must
 quantize the experts AND keep them quantized in memory (``mx.gather_qmm`` at
 run time — see ``SonicExperts`` in layers.py).
 
-Corrected MoE recipe (docs/research/02 — the SHIP tier)
+Corrected MoE recipe (docs/research/02 — the int4 tier)
 -------------------------------------------------------
 QUANTIZE (group_size=64):
   * attention ``wq``/``wkv``/``wo``/``gater`` + dense-FFN ``w_in``/``w_out`` +
-    ``lm_head`` (nn.Linear) at ``bits`` — the ship tier's ``bits=8`` keeps the
+    ``lm_head`` (nn.Linear) at ``bits`` — the int4 tier's ``bits=8`` keeps the
     lm_head int8, which protects the EOA logit (int4 lm_head => immediate-EOS).
   * MoE experts (the bulk) at **per-projection** bits — pre-split w13 into
     gate/up at ``expert_gate_up_bits`` (int4, RTN cos 0.987) and down_w (w2) at
@@ -196,12 +196,12 @@ def export_quantized(
     """Quantize the bf16 trunk and write the safetensors + sidecar.
 
     Loads the bf16 trunk (``weights_dir``), quantizes the selected nn.Linear via
-    ``nn.quantize`` (attention/ffn/lm_head at ``bits`` — so the ship tier's
+    ``nn.quantize`` (attention/ffn/lm_head at ``bits`` — so the int4 tier's
     ``bits=8`` gives an int8 lm_head, which is the EOS fix from docs/research/02)
     and the experts via per-expert ``mx.quantize`` at **per-projection** bits,
     then writes ``out_path`` + a ``quant_config.json`` sidecar beside it.
 
-    Expert bits default to ``bits`` (uniform tier). The corrected MoE ship recipe
+    Expert bits default to ``bits`` (uniform tier). The corrected MoE int4 recipe
     is ``bits=8, expert_gate_up_bits=4, expert_down_bits=8`` — int4 gate/up (the
     bulk; RTN cos 0.987) but int8 down_w (the sensitive proj feeding the residual
     + the recurrent EDA carry). Set BOTH expert bits to 0 to keep experts bf16.
@@ -318,10 +318,10 @@ def export_quantized(
 
 
 # Named tiers (docs/research/02 corrected MoE recipe). Each maps to the three
-# bit knobs the exporter takes. ``ship`` is the recommended near-lossless tier.
+# bit knobs the exporter takes. ``int4`` is the smallest near-lossless tier.
 _TIERS = {
     # int8 attention/ffn/lm_head, int4 gate/up experts, int8 down_w experts.
-    "ship": dict(bits=8, expert_gate_up_bits=4, expert_down_bits=8),
+    "int4": dict(bits=8, expert_gate_up_bits=4, expert_down_bits=8),
     # everything int8 (lm_head + all experts) — the conservative reference tier.
     "int8": dict(bits=8, expert_gate_up_bits=8, expert_down_bits=8),
 }
@@ -333,7 +333,7 @@ def _main() -> None:
     ap.add_argument("--out", required=True, help="output safetensors path")
     ap.add_argument(
         "--tier", choices=tuple(_TIERS), default=None,
-        help="named recipe: 'ship' (int8 lin/down + int4 gate/up — recommended) "
+        help="named recipe: 'int4' (int8 lin/down + int4 gate/up — smallest) "
         "or 'int8' (everything int8). Overrides the --bits/--expert-* flags.",
     )
     ap.add_argument("--bits", type=int, choices=(4, 8), default=None,

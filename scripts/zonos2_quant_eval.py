@@ -25,9 +25,9 @@ process, one trunk in memory at a time) can diff against them.
 
     python scripts/zonos2_quant_eval.py --tier bf16
     python scripts/zonos2_quant_eval.py --tier int8 --weights weights/zonos2-int8
-    python scripts/zonos2_quant_eval.py --tier ship --weights weights/zonos2-int4-ship
+    python scripts/zonos2_quant_eval.py --tier int4 --weights weights/zonos2-int4
     python scripts/zonos2_quant_eval.py --tier int8lin-int4exp \
-        --weights weights/zonos2-int8lin-int4exp   # bisection-confirm tier
+        --weights weights/_diag-int8lin-int4exp   # bisection-confirm tier (diag)
     python scripts/zonos2_quant_eval.py --tier summarize
 
 Pure MLX (+ numpy host-side). No torch.
@@ -405,7 +405,7 @@ def run_tier(tier: str, weights_dir: str) -> dict:
 
 def summarize() -> dict:
     merged = {}
-    for tier in ("bf16", "int8", "ship", "int8lin-int4exp", "int4"):
+    for tier in ("bf16", "int8", "int4", "int8lin-int4exp", "uniform-int4"):
         p = _OUT / f"{tier}.json"
         if p.exists():
             merged[tier] = json.loads(p.read_text())
@@ -421,7 +421,7 @@ def _main() -> None:
     ap = argparse.ArgumentParser(description="Per-tier Zonos2 quant eval (serial GPU).")
     ap.add_argument(
         "--tier", required=True,
-        choices=("bf16", "int8", "ship", "int8lin-int4exp", "int4", "summarize"),
+        choices=("bf16", "int8", "int4", "int8lin-int4exp", "uniform-int4", "summarize"),
     )
     ap.add_argument("--weights", default=None, help="weights dir for this tier")
     args = ap.parse_args()
@@ -433,9 +433,9 @@ def _main() -> None:
     weights = args.weights or {
         "bf16": str(_R / "weights/zonos2-bf16"),
         "int8": str(_R / "weights/zonos2-int8"),
-        "ship": str(_R / "weights/zonos2-int4-ship"),
-        "int8lin-int4exp": str(_R / "weights/zonos2-int8lin-int4exp"),
         "int4": str(_R / "weights/zonos2-int4"),
+        "int8lin-int4exp": str(_R / "weights/_diag-int8lin-int4exp"),
+        "uniform-int4": str(_R / "weights/_diag-uniform-int4"),
     }[args.tier]
     run_tier(args.tier, weights)
 

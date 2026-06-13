@@ -24,7 +24,7 @@ STAGE="${ROOT}/outputs/hf_upload/zonos2-mlx"
 
 BF16_DIR="${WEIGHTS}/zonos2-bf16"
 INT8_DIR="${WEIGHTS}/zonos2-int8"
-INT4_DIR="${WEIGHTS}/zonos2-int4-ship"
+INT4_DIR="${WEIGHTS}/zonos2-int4"
 
 # --- sanity: the three tiers + the tier-independent assets must exist ---------
 for f in \
@@ -35,7 +35,7 @@ for f in \
   "${INT8_DIR}/zonos2-int8.safetensors" \
   "${INT8_DIR}/config.json" \
   "${INT8_DIR}/quant_config.json" \
-  "${INT4_DIR}/zonos2-int4-ship.safetensors" \
+  "${INT4_DIR}/zonos2-int4.safetensors" \
   "${INT4_DIR}/config.json" \
   "${INT4_DIR}/quant_config.json" \
 ; do
@@ -47,7 +47,7 @@ done
 # json/config so the staged tree is self-describing. hf resolves symlinks.
 echo "Staging upload tree at: ${STAGE}"
 rm -rf "${STAGE}"
-mkdir -p "${STAGE}/zonos2-bf16" "${STAGE}/zonos2-int8" "${STAGE}/zonos2-int4-ship"
+mkdir -p "${STAGE}/zonos2-bf16" "${STAGE}/zonos2-int8" "${STAGE}/zonos2-int4"
 
 # bf16 tier (trunk + the tier-independent dac + speaker encoder live here)
 ln -sf "${BF16_DIR}/zonos2-bf16.safetensors" "${STAGE}/zonos2-bf16/zonos2-bf16.safetensors"
@@ -60,10 +60,10 @@ ln -sf "${INT8_DIR}/zonos2-int8.safetensors" "${STAGE}/zonos2-int8/zonos2-int8.s
 cp -f  "${INT8_DIR}/config.json"             "${STAGE}/zonos2-int8/config.json"
 cp -f  "${INT8_DIR}/quant_config.json"       "${STAGE}/zonos2-int8/quant_config.json"
 
-# int4-ship tier (trunk + quant recipe)
-ln -sf "${INT4_DIR}/zonos2-int4-ship.safetensors" "${STAGE}/zonos2-int4-ship/zonos2-int4-ship.safetensors"
-cp -f  "${INT4_DIR}/config.json"                  "${STAGE}/zonos2-int4-ship/config.json"
-cp -f  "${INT4_DIR}/quant_config.json"            "${STAGE}/zonos2-int4-ship/quant_config.json"
+# int4 tier (trunk + quant recipe)
+ln -sf "${INT4_DIR}/zonos2-int4.safetensors" "${STAGE}/zonos2-int4/zonos2-int4.safetensors"
+cp -f  "${INT4_DIR}/config.json"             "${STAGE}/zonos2-int4/config.json"
+cp -f  "${INT4_DIR}/quant_config.json"       "${STAGE}/zonos2-int4/quant_config.json"
 
 # model card = the repo README (HF renders README.md as the model card)
 cp -f "${ROOT}/README.md" "${STAGE}/README.md"

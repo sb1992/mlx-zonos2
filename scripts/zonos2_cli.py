@@ -14,7 +14,7 @@ Examples
         --out outputs/cli/fox_int8.wav \
         --quant int8
 
-    # reuse a pre-enrolled .zonos profile at the int4 ship tier
+    # reuse a pre-enrolled .zonos profile at the int4 tier
     uv run python scripts/zonos2_cli.py \
         --text "Hello there." \
         --profile outputs/voices/myvoice.zonos \
@@ -30,7 +30,7 @@ pure-MLX.
 Quant tiers map to weight dirs:
     bf16 -> weights/zonos2-bf16        (~44 GB peak; 64 GB Macs)
     int8 -> weights/zonos2-int8        (~13 GB peak)
-    int4 -> weights/zonos2-int4-ship   (~10.6 GB peak; 16 GB Macs)
+    int4 -> weights/zonos2-int4        (~10.6 GB peak; 16 GB Macs)
 
 The quantized weight dirs ship only the trunk safetensors; the tier-independent
 DAC codec + speaker encoder always come from weights/zonos2-bf16.
@@ -59,7 +59,7 @@ from zonos2_mlx.speaker import SpeakerProfile  # noqa: E402
 _TIER_DIRS = {
     "bf16": "weights/zonos2-bf16",
     "int8": "weights/zonos2-int8",
-    "int4": "weights/zonos2-int4-ship",
+    "int4": "weights/zonos2-int4",
 }
 # Tier-independent assets always live in the bf16 dir.
 _BF16_DIR = "weights/zonos2-bf16"
