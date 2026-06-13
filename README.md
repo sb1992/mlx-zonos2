@@ -83,7 +83,7 @@ python scripts/zonos2_cli.py --model-dir ./zonos2-mlx-weights/int4 \
 
 <sub>Folder size includes the bundled ~315 MB DAC codec + ECAPA speaker encoder (shared, identical across tiers — Hugging Face Xet de-dups them).</sub>
 
-The MoE experts (the bulk of the 8B) carry the int4; the **router/gate**, the **`lm_head`**, and the sensitive expert **`down`** projection stay int8/bf16 — the MoE-quant recipe that keeps the model intact (details in [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md)). All three tiers produce **full, intelligible audio**. They're equal options — pick by the RAM you have.
+The MoE experts (the bulk of the 8B) carry the int4; the **router/gate**, the **`lm_head`**, and the sensitive expert **`down`** projection stay int8/bf16 — the MoE-quant recipe that keeps the model intact. All three tiers produce **full, intelligible audio**. They're equal options — pick by the RAM you have.
 
 ### Option B — convert / quantize from source (advanced)
 
@@ -188,8 +188,6 @@ Tests live in `tests/` (pytest). The CPU set runs without weights; the GPU parit
 uv run pytest -q -m "not gpu"   # CPU suite (fast; no GPU, no 8B inference)
 uv run pytest -q -m gpu         # GPU parity gates (need weights + fixtures)
 ```
-
-Full numbers: [`docs/research/01-port-results.md`](docs/research/01-port-results.md). MoE-quant recipe: [`docs/research/02-moe-quant-research.md`](docs/research/02-moe-quant-research.md).
 
 ## Requirements & notes
 

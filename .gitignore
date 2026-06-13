@@ -6,5 +6,6 @@ __pycache__/
 
 .DS_Store
 
-# internal planning artifacts (brainstorm specs + plans) — not for the public repo
-docs/superpowers/
+
+# internal docs (planning + research) — not for the public repo
+docs/
