@@ -28,6 +28,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/zonos2_mlx"]
 
+[tool.ruff]
+# The oracle reference is vendored byte-identical to upstream
+# (Zonos2_TTS-ComfyUI/native.py); don't lint third-party code we must not edit.
+extend-exclude = ["scripts/zonos2_oracle/zonos2_ref"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
