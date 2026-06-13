@@ -166,8 +166,16 @@ class Attention(nn.Module):
         v = v.transpose(0, 2, 1, 3)
 
         # Cached path: append the new (pre-GQA) k/v, attend against the full
-        # accumulated k/v (native.py 376-381).
+        # accumulated k/v (native.py 376-381). A multi-token call is only valid
+        # into an EMPTY cache (prefill at start==0); chunked prefill into a
+        # non-empty cache would make the `seqlen > 1` causal mask below wrong
+        # (it assumes square Q==K). Guard it explicitly.
         if cache is not None:
+            if seqlen > 1 and cache.length != 0:
+                raise NotImplementedError(
+                    "multi-token attention into a non-empty KV cache "
+                    "(chunked prefill) is unsupported"
+                )
             k, v = cache.update(k, v)
 
         # GQA: repeat kv heads to n_heads.

@@ -60,7 +60,8 @@ def apply_repetition_penalty(
         or options.repetition_penalty <= 1.0
         or not generated
     ):
-        return logits
+        # Disabled / no history: still honour the "returns a fresh array" contract.
+        return np.array(logits, dtype=np.float32, copy=True)
 
     result = np.array(logits, dtype=np.float32, copy=True)
     # Normalise to (1, n_codebooks, vocab) for indexing parity with the oracle.
@@ -223,7 +224,12 @@ def generate_audio_codes(
     generated: list[np.ndarray] = []
     eos_frame: int | None = None
     eos_countdown = 0
-    rng = np.random.default_rng(options.seed) if options.seed > 0 else None
+    # ONE persistent generator threaded through every step so the RNG state
+    # advances across frames. seed>0 -> reproducible; seed<=0 -> fresh entropy
+    # (matches the oracle: seed>0 manual-seeds, else the global RNG). Building a
+    # fresh default_rng(seed) per step would reset the state and degenerate the
+    # stochastic (temperature>0) path. Greedy never touches rng.
+    rng = np.random.default_rng(options.seed if options.seed > 0 else None)
 
     for step in range(int(options.max_new_tokens)):
         codes = sample_codes(logits, generated, options, rng)  # (n_cb,) int64 host
