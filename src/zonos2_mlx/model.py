@@ -243,7 +243,19 @@ class Zonos2Model(nn.Module):
 
     # ------------------------------------------------------------------
     @classmethod
-    def from_pretrained(cls, weights_dir: str) -> "Zonos2Model":
+    def from_pretrained(cls, weights_dir: str, quant=None) -> "Zonos2Model":
+        """Load the trunk from ``weights_dir``.
+
+        bf16 (default): the original op-for-op path. When a ``quant_config.json``
+        sidecar is present in ``weights_dir`` (or ``quant`` is passed), the
+        int8/int4 path is taken instead: the selected attention/ffn/lm_head
+        Linears are rebuilt as ``QuantizedLinear`` and the MoE experts use the
+        quantized gather-matmul (weights stay packed in memory). The forward /
+        generate API is identical at any tier.
+
+        ``quant`` may be a ``QuantizationConfig``, a path to a sidecar JSON, or
+        ``None`` to auto-detect ``weights_dir/quant_config.json``.
+        """
         wdir = Path(weights_dir)
         cfg_path = wdir / "config.json"
         if not cfg_path.exists():
@@ -258,6 +270,10 @@ class Zonos2Model(nn.Module):
             raise FileNotFoundError(f"no .safetensors under {wdir}")
         st_path = st_files[0]
 
+        qcfg = cls._resolve_quant(wdir, quant)
+        if qcfg is not None:
+            return cls._from_pretrained_quantized(cfg, st_path, qcfg)
+
         model = cls(cfg)
         hdr = load_safetensors_header(st_path)
         src_keys = [k for k in hdr if k != "__metadata__"]
@@ -268,6 +284,96 @@ class Zonos2Model(nn.Module):
         model.update(params)
         mx.eval(model.parameters())
         return model
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _resolve_quant(wdir: Path, quant):
+        """Resolve a QuantizationConfig from an arg or an auto-detected sidecar."""
+        from .quantize import QuantizationConfig
+
+        if quant is None:
+            sidecar = wdir / "quant_config.json"
+            if sidecar.exists():
+                import json
+
+                return QuantizationConfig.from_dict(json.loads(sidecar.read_text()))
+            return None
+        if isinstance(quant, QuantizationConfig):
+            return quant
+        # A path to a sidecar JSON.
+        import json
+
+        return QuantizationConfig.from_dict(json.loads(Path(quant).read_text()))
+
+    @classmethod
+    def _from_pretrained_quantized(cls, cfg, st_path: Path, qcfg) -> "Zonos2Model":
+        """Build a quantized trunk and load the packed int8/int4 weights.
+
+        The quantized safetensors keys are ALREADY in MLX module-path layout
+        (quantize.export_quantized dumped ``tree_flatten(model.parameters())``),
+        so no remap_keys is needed. The Linears are converted to QuantizedLinear
+        via the SAME predicate used at export, then the packed params are loaded;
+        the experts are switched to the quantized gather-matmul path.
+        """
+        import mlx.nn as nn
+
+        from .quantize import quant_linear_predicate
+
+        model = cls(cfg)
+        nn.quantize(
+            model, group_size=qcfg.group_size, bits=qcfg.bits,
+            class_predicate=quant_linear_predicate,
+        )
+
+        raw = mx.load(str(st_path))
+
+        # --- install the quantized experts per MoE layer -------------------
+        for base in qcfg.quantized_expert_bases:
+            # base like "layers.3.moe.experts"
+            parts = base.split(".")
+            layer_id = int(parts[1])
+            experts = model.layers[layer_id].moe.experts
+            packed = {
+                f"{name}_w_{kind}": raw[f"{base}.{name}_w_{kind}"]
+                for name in ("gate", "up", "down")
+                for kind in ("q", "scales", "biases")
+            }
+            experts.set_quantized(
+                packed, bits=qcfg.expert_bits, group_size=qcfg.group_size
+            )
+
+        # --- load every non-expert tensor into the (now-quantized) tree ----
+        expert_keys = {
+            f"{base}.{name}_w_{kind}"
+            for base in qcfg.quantized_expert_bases
+            for name in ("gate", "up", "down")
+            for kind in ("q", "scales", "biases")
+        }
+        params = _assemble_quantized_params(
+            {k: v for k, v in raw.items() if k not in expert_keys}, cfg, qcfg,
+        )
+        model.update(params)
+        mx.eval(model.parameters())
+        return model
+
+
+# ----------------------------------------------------------------------
+def _assemble_quantized_params(raw: dict, cfg: Zonos2Config, qcfg) -> dict:
+    """Unflatten the quantized safetensors (already in MLX module-path layout)
+    into the nested param tree ``model.update`` expects.
+
+    The exporter dumped ``tree_flatten(model.parameters())`` keys directly, so
+    every key is already a dotted MLX path (``layers.3.attn.wq.weight``,
+    ``layers.3.attn.wq.scales``/``.biases`` for the QuantizedLinears, plus the
+    bf16-kept embeddings/norms/router/speaker). The fused wkv / ffn.w_in were
+    already flattened at export, so no reshape is needed here. List indices
+    (``layers.N``, ``embed.embedders.N``) and bare params (``attn.temp``,
+    ``balancing_biases``) are handled by ``tree_unflatten``.
+    """
+    del cfg, qcfg  # the layout is fully self-describing via the flat keys.
+    from mlx.utils import tree_unflatten
+
+    return tree_unflatten(list(raw.items()))
 
 
 # ----------------------------------------------------------------------

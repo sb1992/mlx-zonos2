@@ -268,6 +268,14 @@ class SonicExperts(nn.Module):
     ``w13[e]`` is [6144, 2048]; gate = x @ w13[e][0::2].T, up = x @ w13[e][1::2].T
     (INTERLEAVED stride-2, not split-half). ``w2[e]`` is [2048, 3072].
     Each selected expert's output is weighted by its routing prob and summed.
+
+    Two weight layouts are supported, selected at load time:
+      * bf16 (default): the fused ``w13``/``w2`` arrays + the per-token gather
+        matmul above. This is the unchanged T2/T6 path.
+      * quantized: per-expert int8/int4 ``gate_w``/``up_w``/``down_w`` (packed
+        uint32 + scales + biases). The forward routes each token to its expert
+        via ``mx.gather_qmm`` (the quantized gather-matmul), keeping the weights
+        quantized in memory (no dequant-to-bf16). Enabled by ``set_quantized``.
     """
 
     def __init__(self, n_experts: int, dim: int, intermediate: int):
@@ -275,15 +283,68 @@ class SonicExperts(nn.Module):
         self.n_experts = n_experts
         self.dim = dim
         self.intermediate = intermediate
-        # w13: [E, 2*intermediate, dim]; w2: [E, dim, intermediate]
+        # bf16 fused layout: w13 [E, 2*intermediate, dim]; w2 [E, dim, intermediate]
         self.w13 = mx.zeros((n_experts, 2 * intermediate, dim))
         self.w2 = mx.zeros((n_experts, dim, intermediate))
+        # Quantized layout (populated by set_quantized; None => bf16 path).
+        self._quant_bits: int | None = None
+        self._quant_group_size: int = 64
+
+    def set_quantized(self, packed: dict, bits: int, group_size: int) -> None:
+        """Switch this expert block to the quantized gather-matmul path.
+
+        ``packed`` carries ``{gate,up,down}_w_{q,scales,biases}`` stacked over
+        the expert axis (built by quantize.export_quantized). The bf16 ``w13``/
+        ``w2`` placeholders are dropped to free memory; the quantized tensors are
+        registered as bare params so ``model.update`` / ``mx.eval`` see them.
+        """
+        self._quant_bits = int(bits)
+        self._quant_group_size = int(group_size)
+        # Drop the bf16 placeholders so they don't sit in memory.
+        self.w13 = None
+        self.w2 = None
+        for name in ("gate", "up", "down"):
+            setattr(self, f"{name}_w_q", packed[f"{name}_w_q"])
+            setattr(self, f"{name}_w_scales", packed[f"{name}_w_scales"])
+            setattr(self, f"{name}_w_biases", packed[f"{name}_w_biases"])
+
+    def _qproj(self, x: mx.array, name: str, ids: mx.array) -> mx.array:
+        """Per-token quantized projection ``x[t] @ W[ids[t]].T`` via gather_qmm.
+
+        ``x`` is (tokens, in); ``ids`` is (tokens,) expert indices. Returns
+        (tokens, out). ``mx.gather_qmm`` picks ``W[ids[t]]`` per row.
+        """
+        out = mx.gather_qmm(
+            x[:, None, :],
+            getattr(self, f"{name}_w_q"),
+            getattr(self, f"{name}_w_scales"),
+            getattr(self, f"{name}_w_biases"),
+            rhs_indices=ids,
+            transpose=True,
+            group_size=self._quant_group_size,
+            bits=self._quant_bits,
+        )
+        return out.reshape(x.shape[0], -1)
 
     def __call__(self, x: mx.array, route_prob: mx.array, expert_ids: mx.array) -> mx.array:
         # x: (tokens, dim); expert_ids/route_prob: (tokens, top_k)
         tokens = x.shape[0]
         top_k = expert_ids.shape[-1]
         output = mx.zeros_like(x)
+
+        if self._quant_bits is not None:
+            # Quantized gather-matmul path: weights stay int8/int4 in memory.
+            for slot in range(top_k):
+                ids = expert_ids[:, slot].astype(mx.uint32)  # (tokens,)
+                weights = route_prob[:, slot]                # (tokens,)
+                gate = self._qproj(x, "gate", ids)           # (tokens, intermediate)
+                up = self._qproj(x, "up", ids)               # (tokens, intermediate)
+                h = nn.silu(gate) * up                       # (tokens, intermediate)
+                expert_out = self._qproj(h, "down", ids)     # (tokens, dim)
+                output = output + expert_out * weights[:, None].astype(expert_out.dtype)
+            return output.reshape(tokens, self.dim)
+
+        # bf16 fused path (unchanged).
         # Interleaved gate/up split, precomputed views per call.
         gate_w = self.w13[:, 0::2, :]  # (E, intermediate, dim)
         up_w = self.w13[:, 1::2, :]    # (E, intermediate, dim)

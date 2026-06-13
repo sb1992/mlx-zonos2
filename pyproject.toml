@@ -31,3 +31,7 @@ packages = ["src/zonos2_mlx"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "gpu: requires the GPU + the 8B trunk weights (run serially)",
+    "slow: long-running test",
+]
