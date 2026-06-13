@@ -287,18 +287,31 @@ class SonicExperts(nn.Module):
         self.w13 = mx.zeros((n_experts, 2 * intermediate, dim))
         self.w2 = mx.zeros((n_experts, dim, intermediate))
         # Quantized layout (populated by set_quantized; None => bf16 path).
-        self._quant_bits: int | None = None
+        # Per-projection bits: gate/up share gate_up_bits, down has down_bits.
+        self._quant_bits: dict[str, int] | None = None
         self._quant_group_size: int = 64
 
-    def set_quantized(self, packed: dict, bits: int, group_size: int) -> None:
+    def set_quantized(
+        self,
+        packed: dict,
+        gate_up_bits: int,
+        down_bits: int,
+        group_size: int,
+    ) -> None:
         """Switch this expert block to the quantized gather-matmul path.
 
         ``packed`` carries ``{gate,up,down}_w_{q,scales,biases}`` stacked over
-        the expert axis (built by quantize.export_quantized). The bf16 ``w13``/
-        ``w2`` placeholders are dropped to free memory; the quantized tensors are
+        the expert axis (built by quantize.export_quantized). The experts use
+        **per-projection** bits: gate_w/up_w at ``gate_up_bits`` (int4) and down_w
+        at ``down_bits`` (int8) — see docs/research/02. The bf16 ``w13``/``w2``
+        placeholders are dropped to free memory; the quantized tensors are
         registered as bare params so ``model.update`` / ``mx.eval`` see them.
         """
-        self._quant_bits = int(bits)
+        self._quant_bits = {
+            "gate": int(gate_up_bits),
+            "up": int(gate_up_bits),
+            "down": int(down_bits),
+        }
         self._quant_group_size = int(group_size)
         # Drop the bf16 placeholders so they don't sit in memory.
         self.w13 = None
@@ -312,7 +325,9 @@ class SonicExperts(nn.Module):
         """Per-token quantized projection ``x[t] @ W[ids[t]].T`` via gather_qmm.
 
         ``x`` is (tokens, in); ``ids`` is (tokens,) expert indices. Returns
-        (tokens, out). ``mx.gather_qmm`` picks ``W[ids[t]]`` per row.
+        (tokens, out). ``mx.gather_qmm`` picks ``W[ids[t]]`` per row. The bit width
+        is per-projection (gate/up vs down), so it MUST match the bits each
+        weight was quantized at in the exporter.
         """
         out = mx.gather_qmm(
             x[:, None, :],
@@ -322,7 +337,7 @@ class SonicExperts(nn.Module):
             rhs_indices=ids,
             transpose=True,
             group_size=self._quant_group_size,
-            bits=self._quant_bits,
+            bits=self._quant_bits[name],
         )
         return out.reshape(x.shape[0], -1)
 

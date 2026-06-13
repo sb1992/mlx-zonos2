@@ -339,7 +339,10 @@ class Zonos2Model(nn.Module):
                 for kind in ("q", "scales", "biases")
             }
             experts.set_quantized(
-                packed, bits=qcfg.expert_bits, group_size=qcfg.group_size
+                packed,
+                gate_up_bits=qcfg.expert_gate_up_bits,
+                down_bits=qcfg.expert_down_bits,
+                group_size=qcfg.group_size,
             )
 
         # --- load every non-expert tensor into the (now-quantized) tree ----
