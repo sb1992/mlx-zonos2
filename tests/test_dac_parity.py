@@ -5,6 +5,7 @@ test_dac_decode_psnr — loads weights and runs inference; requires GPU + fixtur
 """
 
 import numpy as np
+import pytest
 
 from zonos2_mlx.dac import shear_up
 
@@ -39,6 +40,7 @@ def test_shear_up_shape_preserved():
 # GPU parity test
 # ---------------------------------------------------------------------------
 
+@pytest.mark.gpu
 def test_dac_decode_psnr():
     from pathlib import Path
 

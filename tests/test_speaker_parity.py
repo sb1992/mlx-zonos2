@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import mlx.core as mx
+import pytest
 
 from zonos2_mlx.speaker import (
     EcapaTDNN,
@@ -78,6 +79,7 @@ def test_speaker_profile_roundtrip(tmp_path):
 # GPU parity tests — the T4 gate
 # ---------------------------------------------------------------------------
 
+@pytest.mark.gpu
 def test_ecapa_embedding_parity():
     enc = EcapaTDNN.from_pretrained(str(_R / "weights/zonos2-bf16/speaker_encoder"))
     mel = mx.array(np.load(_F / "ecapa_in.npy"))
@@ -89,6 +91,7 @@ def test_ecapa_embedding_parity():
     assert c >= 0.999, f"ECAPA embedding cosine {c:.6f} < 0.999"
 
 
+@pytest.mark.gpu
 def test_lda_parity():
     enc = EcapaTDNN.from_pretrained(str(_R / "weights/zonos2-bf16/speaker_encoder"))
     lda = SpeakerLDA.from_dit(str(_R / "weights/zonos2-bf16/zonos2-bf16.safetensors"))

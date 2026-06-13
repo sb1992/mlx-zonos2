@@ -7,6 +7,7 @@ trunk is 8B/~15GB bf16).
 
 import numpy as np
 import mlx.core as mx
+import pytest
 from pathlib import Path
 
 from zonos2_mlx.model import Zonos2Model
@@ -26,6 +27,7 @@ def _cos(a, b):
     return float((a * b).sum() / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
 
 
+@pytest.mark.gpu
 def test_kv_cache_matches_full_forward():
     model = Zonos2Model.from_pretrained(str(_R / "weights/zonos2-bf16"))
     cfg = model.cfg

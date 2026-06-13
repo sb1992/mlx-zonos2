@@ -146,7 +146,7 @@ MoE-quant recipe: [`docs/research/02-moe-quant-research.md`](docs/research/02-mo
 ### Tests
 
 ```bash
-uv run pytest -q -m "not gpu"   # CPU suite (fast; no weights needed)
+uv run pytest -q -m "not gpu"   # CPU suite (fast; no GPU, no 8B inference)
 uv run pytest -q -m gpu         # GPU parity gates (need weights + fixtures, run serial)
 ```
 

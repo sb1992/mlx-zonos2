@@ -39,6 +39,7 @@ Run SERIALLY (the trunk is 8B / ~15 GB bf16) — one GPU job at a time.
 
 import numpy as np
 import mlx.core as mx
+import pytest
 from pathlib import Path
 
 from zonos2_mlx.generate import SamplingOptions, sample_codes
@@ -71,6 +72,7 @@ def _greedy_opts() -> SamplingOptions:
     )
 
 
+@pytest.mark.gpu
 def test_e2e_teacher_forced_codes_match():
     """Teacher-forced per-codebook agreement against the oracle delayed codes.
 
@@ -154,6 +156,7 @@ def test_e2e_teacher_forced_codes_match():
     )
 
 
+@pytest.mark.gpu
 def test_e2e_by_ear_smoke():
     """NON-gating by-ear smoke: free-run synthesize() -> outputs/e2e.wav.
 

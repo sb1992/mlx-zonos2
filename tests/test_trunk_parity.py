@@ -9,6 +9,7 @@ assertion (see test_trunk_parity docstring for details).
 
 import numpy as np
 import mlx.core as mx
+import pytest
 from pathlib import Path
 
 from zonos2_mlx.model import Zonos2Model
@@ -26,6 +27,7 @@ def _per_token_cos(a, b):
     return num / den
 
 
+@pytest.mark.gpu
 def test_trunk_parity():
     """Parity gate for the 8B MoE trunk vs the torch (MPS bf16) oracle.
 

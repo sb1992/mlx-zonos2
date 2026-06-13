@@ -1,0 +1,19 @@
+zonos2-mlx
+Copyright 2026 Shraey Bhatia
+
+This product is a pure-MLX reimplementation of inference for Zyphra ZONOS2.
+
+It includes/derives from the following Apache-2.0 works:
+
+- ZONOS2 (Zyphra) — the 8B MoE autoregressive TTS model, DAC 44.1 kHz codec,
+  and ECAPA-TDNN speaker encoder whose weights this project converts and
+  quantizes. Model and weights © Zyphra, licensed under Apache-2.0.
+  https://github.com/Zyphra/ZONOS2
+
+- Zonos2_TTS-ComfyUI (Saganaki22) — the clean plain-PyTorch reference used as
+  the porting oracle (vendored read-only under
+  scripts/zonos2_oracle/zonos2_ref/). Licensed under Apache-2.0.
+
+This project's MLX engine code is original work by the author. The DAC codec
+mirrors the HuggingFace `transformers` DacModel; the speaker encoder mirrors
+the released ECAPA-TDNN checkpoint shipped with ZONOS2.

@@ -38,7 +38,7 @@ import zonos2_ref.runtime as runtime  # noqa: E402
 # --- Fixed, reproducible inputs ------------------------------------------------
 TEXT = "The quick brown fox jumps over the lazy dog."
 SEED = 0
-MAX_NEW_TOKENS = 64  # small cap: enough to exercise shear/EOS/DAC, finishes fast
+MAX_NEW_TOKENS = 1024  # generous cap; AR stops at natural EOS for the full short sentence
 SPEAKING_RATE_BUCKET = -1  # unconditioned (matches node "default")
 QUALITY_BUCKETS = [None] * 6  # all unconditioned (matches node "default")
 CLEAN_SPEAKER_BACKGROUND = False
