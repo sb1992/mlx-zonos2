@@ -41,10 +41,11 @@ WIN_LENGTH = 1024
 COMPAT = "zonos2-bf16/ecapa-tdnn+lda/v1"
 
 
-def _prepare_mel(ref_path: str) -> np.ndarray:
+def _prepare_mel(ref_path: str) -> tuple[np.ndarray, float]:
     """Load audio and compute the log-mel exactly as runtime.py does.
 
-    Returns a numpy (1, T, 128) float32 mel.
+    Returns ``(mel, duration_seconds)`` where ``mel`` is a numpy
+    (1, T, 128) float32 log-mel spectrogram.
     """
     import soundfile as sf
     import torch

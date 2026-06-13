@@ -54,6 +54,8 @@ def reflect_pad_time(x: mx.array, pad: int) -> mx.array:
     """
     if pad == 0:
         return x
+    if pad >= x.shape[1]:
+        raise ValueError(f"reflect pad {pad} >= time length {x.shape[1]} (torch reflect would error)")
     left = x[:, 1:pad + 1, :][:, ::-1, :]      # mirror of indices [1 .. pad] -> [pad .. 1]
     right = x[:, -pad - 1:-1, :][:, ::-1, :]    # mirror of indices [T-pad-1 .. T-2] -> [T-2 .. T-pad-1]
     return mx.concatenate([left, x, right], axis=1)
