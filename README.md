@@ -9,7 +9,7 @@ ZONOS2 is a **16-expert, top-1 MoE** AR model (layer 26 routes top-2), paired wi
 ## What it is
 
 - **Architecture:** an 8B autoregressive MoE trunk (16 experts, top-1; layer 26 top-2) → multi-codebook audio tokens → the **DAC 44.1 kHz** neural codec for the waveform. An **ECAPA-TDNN** speaker encoder (+ an LDA projection) conditions the speaker identity.
-- **Zero-shot voice clone:** one reference clip clones the voice — enroll it once into a `.zonos` profile, or pass `--ref` to enroll on the fly.
+- **Voice cloning:** one reference clip clones the voice — enroll it once into a `.zonos` profile, or pass `--ref` to enroll on the fly.
 - **Pure-MLX runtime:** nothing in `src/zonos2_mlx/*` imports torch; the inference math is all MLX. `torchaudio` appears only in `scripts/` for the reference-enrollment mel front-end (and the dev parity oracle).
 - **CLI + Python API:** a `scripts/zonos2_cli.py` front-end and `from zonos2_mlx import synthesize`.
 
@@ -202,7 +202,7 @@ These are specifics of *this MLX port* — not limitations of the model itself, 
 
 ## Responsible use
 
-This runtime performs **zero-shot voice cloning** — it can reproduce a person's voice from a few seconds of reference audio. That capability carries real risk of misuse. By using this software you agree to use it responsibly:
+This runtime performs **voice cloning** — it can reproduce a person's voice from a few seconds of reference audio. That capability carries real risk of misuse. By using this software you agree to use it responsibly:
 
 - **No impersonation, fraud, or disinformation.** Do not use cloned voices to impersonate real people without authorization, to commit fraud or social engineering, to evade voice-based authentication, or to produce misleading or deceptive content.
 - **Consent for reference audio.** Only clone a voice you own or for which you have the speaker's explicit, informed consent. Respect applicable privacy / publicity / data-protection laws in your jurisdiction.
