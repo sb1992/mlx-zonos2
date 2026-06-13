@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 
 .DS_Store
+
+# internal planning artifacts (brainstorm specs + plans) — not for the public repo
+docs/superpowers/
