@@ -121,7 +121,7 @@ def main() -> int:
         help="Expressive mode (disables the accurate-mode token).",
     )
     ap.set_defaults(accurate_mode=True)
-    ap.add_argument("--seed", type=int, default=0, help="Sampling seed.")
+    ap.add_argument("--seed", type=int, default=0, help="Sampling seed (only affects --sample; greedy is deterministic).")
     ap.add_argument(
         "--max-new-tokens",
         type=int,

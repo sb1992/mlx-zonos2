@@ -102,9 +102,9 @@ CLI wires this for you).
 
 | Tier | dir | size | peak RAM | target Macs | HF location |
 |---|---|---|---|---|---|
-| bf16 | `weights/zonos2-bf16` | ~15 GB | ~44 GB | 64 GB | `shraey/zonos2-mlx` → `zonos2-bf16/` |
-| int8 | `weights/zonos2-int8` | ~8 GB | ~13 GB | 32 GB | `shraey/zonos2-mlx` → `zonos2-int8/` |
-| int4-ship | `weights/zonos2-int4-ship` | ~5.8 GB | ~10.6 GB | 16 GB | `shraey/zonos2-mlx` → `zonos2-int4-ship/` |
+| bf16 | `weights/zonos2-bf16` | 14 GB | ~44 GB | 64 GB | `shraey/zonos2-mlx` → `zonos2-bf16/` |
+| int8 | `weights/zonos2-int8` | 7.6 GB | ~13 GB | 32 GB | `shraey/zonos2-mlx` → `zonos2-int8/` |
+| int4-ship | `weights/zonos2-int4-ship` | 5.4 GB | ~10.6 GB | 16 GB | `shraey/zonos2-mlx` → `zonos2-int4-ship/` |
 
 Download (after `hf auth login`):
 

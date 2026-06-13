@@ -33,8 +33,10 @@ for f in \
   "${BF16_DIR}/dac_44khz/model.safetensors" \
   "${BF16_DIR}/speaker_encoder/model.safetensors" \
   "${INT8_DIR}/zonos2-int8.safetensors" \
+  "${INT8_DIR}/config.json" \
   "${INT8_DIR}/quant_config.json" \
   "${INT4_DIR}/zonos2-int4-ship.safetensors" \
+  "${INT4_DIR}/config.json" \
   "${INT4_DIR}/quant_config.json" \
 ; do
   [ -e "$f" ] || { echo "MISSING: $f" >&2; exit 1; }
@@ -67,7 +69,7 @@ cp -f  "${INT4_DIR}/quant_config.json"            "${STAGE}/zonos2-int4-ship/qua
 cp -f "${ROOT}/README.md" "${STAGE}/README.md"
 
 echo "Staged tree:"
-find "${STAGE}" -maxdepth 2 -type f -o -maxdepth 2 -type l | sort | sed "s#${STAGE}#  zonos2-mlx#"
+find "${STAGE}" -maxdepth 2 \( -type f -o -type l \) | sort | sed "s#${STAGE}#  zonos2-mlx#"
 
 # --- the EXACT upload command (fast/resumable Xet path) ----------------------
 echo
