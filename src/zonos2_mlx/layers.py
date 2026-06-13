@@ -73,6 +73,35 @@ def rope_tables(head_dim: int, max_seqlen: int, theta: float):
     return mx.cos(freqs), mx.sin(freqs)
 
 
+class KVCache:
+    """Per-layer incremental K/V cache (native.py LayerKVCache 207-220).
+
+    Holds k,v as ``(B, n_kv_heads, T, head_dim)`` grown by concat along the time
+    axis (axis=2). ``length`` tracks how many positions are populated and drives
+    the RoPE cos/sin offset slice (``cos = rope[start:end]``).
+
+    The cache stores the PRE-GQA-repeat kv (n_kv_heads heads), exactly like the
+    oracle's ``cache.key`` which is shaped on ``num_kv_heads``.
+    """
+
+    def __init__(self):
+        self.k: mx.array | None = None
+        self.v: mx.array | None = None
+        self.length = 0
+
+    def update(self, new_k: mx.array, new_v: mx.array) -> tuple[mx.array, mx.array]:
+        """Append ``new_k``/``new_v`` (B, n_kv_heads, qlen, head_dim) and return
+        the full ``(B, n_kv_heads, length, head_dim)`` k/v."""
+        if self.k is None:
+            self.k = new_k
+            self.v = new_v
+        else:
+            self.k = mx.concatenate([self.k, new_k], axis=2)
+            self.v = mx.concatenate([self.v, new_v], axis=2)
+        self.length = self.k.shape[2]
+        return self.k, self.v
+
+
 class Attention(nn.Module):
     """GQA attention with QK-RMSNorm, learned per-head query temperature,
     and a learned sigmoid output gate (native.py Attention 238-389).
@@ -92,7 +121,24 @@ class Attention(nn.Module):
         # temp is a bare parameter [1, 16, 1]; per-head query temperature.
         self.temp = mx.zeros((1, n_heads, 1))
 
-    def __call__(self, x: mx.array, cos: mx.array, sin: mx.array) -> mx.array:
+    def __call__(
+        self,
+        x: mx.array,
+        cos: mx.array,
+        sin: mx.array,
+        cache: "KVCache | None" = None,
+    ) -> mx.array:
+        """Attention.
+
+        ``cos``/``sin`` are the RoPE tables ALREADY sliced for this call's
+        positions (``rope[start:end]``) — the model passes the offset slice.
+
+        - ``cache is None``: the T2 full-causal path (unchanged math).
+        - ``cache is not None``: compute q/k/v for the new tokens, append k/v to
+          the cache, attend q against the FULL cached k/v. Causal mask only when
+          qlen>1 (multi-token prefill); single-step decode uses no mask
+          (native.py 381).
+        """
         batch, seqlen, _ = x.shape
 
         # Output gate from the pre-projection normalized input (native.py 355).
@@ -119,6 +165,11 @@ class Attention(nn.Module):
         k = k.transpose(0, 2, 1, 3)
         v = v.transpose(0, 2, 1, 3)
 
+        # Cached path: append the new (pre-GQA) k/v, attend against the full
+        # accumulated k/v (native.py 376-381).
+        if cache is not None:
+            k, v = cache.update(k, v)
+
         # GQA: repeat kv heads to n_heads.
         if self.repeat > 1:
             k = mx.repeat(k, self.repeat, axis=1)
@@ -127,7 +178,8 @@ class Attention(nn.Module):
         # The learned per-head `temp` multiplies q BEFORE the attention scale;
         # native.py calls torch SDPA with no explicit scale, so the default
         # 1/sqrt(head_dim) still applies on top of temp (lines 310-326, 366).
-        # Causal mask only on prefill (start==0 and qlen>1), which is our case.
+        # Causal mask only when this call adds >1 query token at the sequence
+        # start (prefill); single-step decode against the cache uses no mask.
         scale = 1.0 / math.sqrt(self.head_dim)
         mask = "causal" if seqlen > 1 else None
         attended = mx.fast.scaled_dot_product_attention(

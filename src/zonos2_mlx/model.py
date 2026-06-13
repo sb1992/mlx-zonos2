@@ -19,6 +19,7 @@ from .config import Zonos2Config  # noqa: E402
 from .layers import (  # noqa: E402
     Attention,
     DenseFeedForward,
+    KVCache,
     MoEFeedForward,
     rms_norm_weightless,
     rope_tables,
@@ -92,8 +93,8 @@ class TransformerBlock(nn.Module):
         else:
             self.ffn = DenseFeedForward(cfg.dim, cfg.intermediate_size)
 
-    def __call__(self, x, cos, sin, router_states):
-        x = x + self.attn(self.attn_norm(x), cos, sin)
+    def __call__(self, x, cos, sin, router_states, cache=None):
+        x = x + self.attn(self.attn_norm(x), cos, sin, cache)
         normed = self.ffn_norm(x)
         if self.is_moe:
             ff, router_states = self.moe(normed, router_states)
@@ -143,19 +144,7 @@ class Zonos2Model(nn.Module):
         # Speaker injection: overwrite the hidden at speaker_position with
         # speaker_proj(lda) (native.py 692-697). lda is the already-projected
         # 1024-d vector (the fixture), so only speaker_proj is applied here.
-        if speaker_lda is not None and speaker_position is not None:
-            if 0 <= speaker_position < x.shape[1]:
-                projected = self.speaker_proj(speaker_lda.astype(self.speaker_proj.weight.dtype))
-                projected = projected.astype(x.dtype).reshape(x.shape[0], cfg.dim)
-                # x[:, speaker_position] = projected
-                rows = []
-                for b in range(x.shape[0]):
-                    row = mx.concatenate(
-                        [x[b, :speaker_position], projected[b][None], x[b, speaker_position + 1 :]],
-                        axis=0,
-                    )
-                    rows.append(row[None])
-                x = mx.concatenate(rows, axis=0)
+        x = self._inject_speaker(x, speaker_lda, speaker_position)
 
         # Weightless RMSNorm over the whole sequence (native.py 698-703).
         x = rms_norm_weightless(x, cfg.norm_eps)
@@ -186,6 +175,71 @@ class Zonos2Model(nn.Module):
         )
         logits = softcap(logits, cfg.loss_softcap)
         return logits[0]  # (n_codebooks, codebook_size+2)
+
+    # ------------------------------------------------------------------
+    # KV-cached incremental decode path (native.py 683-722 + LayerKVCache).
+    # ------------------------------------------------------------------
+    def _inject_speaker(self, x, speaker_lda, speaker_position):
+        """Overwrite x[:, speaker_position] with speaker_proj(lda) when both
+        args are given and the position is in range (native.py 692-697)."""
+        cfg = self.cfg
+        if speaker_lda is None or speaker_position is None:
+            return x
+        if not (0 <= speaker_position < x.shape[1]):
+            return x
+        projected = self.speaker_proj(speaker_lda.astype(self.speaker_proj.weight.dtype))
+        projected = projected.astype(x.dtype).reshape(x.shape[0], cfg.dim)
+        rows = []
+        for b in range(x.shape[0]):
+            row = mx.concatenate(
+                [x[b, :speaker_position], projected[b][None], x[b, speaker_position + 1 :]],
+                axis=0,
+            )
+            rows.append(row[None])
+        return mx.concatenate(rows, axis=0)
+
+    def make_kv_caches(self, max_len: int) -> list[KVCache]:
+        """One KVCache per layer (native.py create_kv_cache 652-669).
+
+        ``max_len`` is accepted for parity / future bounds-checking; the MLX
+        cache grows by concat so no pre-allocation is required.
+        """
+        del max_len  # cache grows lazily; nothing to preallocate.
+        return [KVCache() for _ in range(self.cfg.n_layers)]
+
+    def forward_cached(
+        self,
+        ids: mx.array,
+        caches: list[KVCache],
+        speaker_lda: mx.array | None = None,
+        speaker_position: int | None = None,
+    ) -> mx.array:
+        """KV-cached forward returning the LAST-position logits (1, 9, 1026).
+
+        The RoPE offset is ``caches[0].length`` BEFORE this call, exactly
+        mirroring the oracle ``start = cache.length`` / ``cos = rope[start:end]``
+        (native.py 347-372). Speaker injection happens only when both speaker
+        args are passed (prefill). Each layer threads its own per-layer cache.
+        """
+        cfg = self.cfg
+        x = self.embed(ids)  # (B, T, dim)
+        x = self._inject_speaker(x, speaker_lda, speaker_position)
+
+        # Weightless RMSNorm over the sequence (native.py 698-703).
+        x = rms_norm_weightless(x, cfg.norm_eps)
+
+        start = caches[0].length
+        seqlen = x.shape[1]
+        end = start + seqlen
+        cos = self._rope_cos[start:end].reshape(1, seqlen, 1, cfg.head_dim // 2).astype(x.dtype)
+        sin = self._rope_sin[start:end].reshape(1, seqlen, 1, cfg.head_dim // 2).astype(x.dtype)
+
+        router_states = None
+        for layer, cache in zip(self.layers, caches):
+            x, router_states = layer(x, cos, sin, router_states, cache)
+
+        # LAST-position multi-codebook logits (native.py 713-722).
+        return self.head(x[0])[None]  # (1, n_codebooks, codebook_size+2)
 
     # ------------------------------------------------------------------
     @classmethod
