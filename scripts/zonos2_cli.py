@@ -137,14 +137,20 @@ def main() -> int:
     )
     ap.add_argument("--long", dest="long_form", action="store_true",
                     help="Long-form: split on sentence boundaries, pack into chunks, concatenate.")
-    ap.add_argument("--max-seconds", type=float, default=40.0,
-                    help="Long-form per-chunk target in estimated audio seconds (default 40).")
-    ap.add_argument("--gap-ms", type=int, default=80,
-                    help="Long-form silence between chunks, ms (default 80).")
+    ap.add_argument("--max-seconds", type=float, default=None,
+                    help="Long-form per-chunk target in estimated audio seconds "
+                         "(default 40, or 25 with --polish).")
+    ap.add_argument("--gap-ms", type=int, default=None,
+                    help="Long-form silence between chunks, ms (default 80, or 250 with --polish).")
     ap.add_argument("--chars-per-sec", type=float, default=None,
                     help="Long-form: override the script-aware duration estimate (chars/sec).")
     ap.add_argument("--language", default=None,
                     help="Optional language code (e.g. ZH/HI) to pick chunking rates.")
+    ap.add_argument("--polish", action="store_true",
+                    help="Long-form: seam-polish recipe — smaller drift-safe chunks + per-chunk "
+                         "silence trim + release fade + boundary loudness match + normalize.")
+    ap.add_argument("--release-ms", type=int, default=200,
+                    help="Long-form (--polish): per-chunk end release/taper, ms (default 200).")
     ap.add_argument(
         "--greedy",
         dest="greedy",
@@ -209,6 +215,8 @@ def main() -> int:
             language=args.language,
             speaking_rate_bucket=args.speaking_rate,
             accurate_mode=args.accurate_mode,
+            polish=args.polish,
+            release_ms=args.release_ms,
             out_wav=args.out,
             progress=True,
         )

@@ -146,6 +146,21 @@ so memory stays at the single-pass footprint regardless of total length. For
 non-Latin text pass `--language ZH`/`HI`/… (or tune `--chars-per-sec`) so the
 chunk-size estimate matches the script.
 
+**Smoother seams (`--polish`).** Independently-generated chunks join with a tiny
+discontinuity (the model drifts slightly over a long generation, so chunk endings
+can sound a touch abrupt and loudness can step at the join). `--polish` applies a
+seam recipe: smaller drift-safe chunks (~25s), a per-chunk silence trim, a release
+fade so the last word *settles* instead of stopping, boundary-local loudness
+matching (each chunk's onset matched to the previous chunk's tail, not just a
+global average), and a final normalize. It's opt-in — without it the join is the
+plain silence-gap concatenation.
+
+```bash
+python scripts/zonos2_cli.py --long --polish \
+    --text "$(cat article.txt)" --profile outputs/voices/alice.zonos \
+    --out outputs/cli/article.wav      # --release-ms tunes the end taper (default 200)
+```
+
 ## Python API
 
 ```python

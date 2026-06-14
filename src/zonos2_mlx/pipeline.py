@@ -26,6 +26,7 @@ from .chunking import assemble_chunks, chunk_health, chunk_max_new_tokens, plan_
 from .dac import Dac44k  # noqa: E402
 from .generate import SamplingOptions, generate_audio_codes  # noqa: E402
 from .model import Zonos2Model  # noqa: E402
+from .seam_polish import assemble_polished, trim_silence  # noqa: E402
 from .speaker import SpeakerProfile  # noqa: E402
 from .textnorm import build_prompt, normalize_text  # noqa: E402
 
@@ -218,8 +219,8 @@ def synthesize_long(
     speaker_dir: str | None = None,
     greedy: bool = True,
     seed: int = 0,
-    max_seconds: float = 40.0,
-    gap_ms: int = 80,
+    max_seconds: float | None = None,
+    gap_ms: int | None = None,
     chars_per_sec: float | None = None,
     language: str | None = None,
     normalize: bool = False,
@@ -227,6 +228,8 @@ def synthesize_long(
     quality_buckets=None,
     clean_speaker_background: bool = False,
     accurate_mode: bool = True,
+    polish: bool = False,
+    release_ms: int = 200,
     out_wav: str | None = None,
     progress: bool = False,
     **knobs,
@@ -236,7 +239,17 @@ def synthesize_long(
 
     A single chunk runs through the same packed-generation loop (so it gets the per-chunk frame cap, not synthesize's short default).
     Model + DAC + speaker are loaded/resolved ONCE and reused across chunks.
+
+    ``polish`` (opt-in, default off — leaves the existing behaviour byte-identical)
+    enables the seam-polish recipe: it picks the drift-safe defaults (``max_seconds``
+    25, ``gap_ms`` 250 when those are left unset), trims each chunk's silence, and
+    assembles via :func:`seam_polish.assemble_polished` (release fade so the last word
+    settles + boundary-local loudness match + peak-normalize). ``release_ms`` tunes the
+    per-chunk end taper. With ``polish=False`` the defaults resolve to 40 / 80 and the
+    assembly is the plain silence-gap concatenation, unchanged.
     """
+    max_seconds = max_seconds if max_seconds is not None else (25.0 if polish else 40.0)
+    gap_ms = gap_ms if gap_ms is not None else (250 if polish else 80)
     chunks = plan_chunks(text, max_seconds=max_seconds, language=language,
                          chars_per_sec=chars_per_sec)
     if not chunks:
@@ -283,10 +296,15 @@ def synthesize_long(
                   f"(silent/too short) for: {chunk_text[:60]!r}")
         if progress:
             print(f"  chunk {i + 1}/{len(chunks)}: {wav.shape[0] / SAMPLE_RATE:.2f}s")
+        if polish:
+            wav = trim_silence(wav, SAMPLE_RATE)
         wavs.append(wav)
         all_codes.append(codes)
 
-    full = assemble_chunks(wavs, SAMPLE_RATE, gap_ms).reshape(1, -1)
+    if polish:
+        full = assemble_polished(wavs, SAMPLE_RATE, gap_ms=gap_ms, release_ms=release_ms).reshape(1, -1)
+    else:
+        full = assemble_chunks(wavs, SAMPLE_RATE, gap_ms).reshape(1, -1)
     result = SynthesisResult(
         wav=full,
         sample_rate=SAMPLE_RATE,
