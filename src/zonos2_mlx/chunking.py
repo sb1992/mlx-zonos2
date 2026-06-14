@@ -233,3 +233,23 @@ def plan_chunks(
     return pack_sentences(
         pieces, max_seconds=max_seconds, language=language, chars_per_sec=chars_per_sec
     )
+
+
+# --- per-chunk frame-cap backstop (keeps prompt + audio under max_seqlen) ---
+FPS = 86.13               # DAC frames per audio second
+_FRAME_CAP_FACTOR = 1.2   # let EOS fire ~20% past the pack target before the cap
+_CEILING_MARGIN = 64      # safety gap below max_seqlen
+
+
+def chunk_max_new_tokens(
+    prompt_len: int, *, max_seconds: float, max_seqlen: int,
+    fps: float = FPS, margin: int = _CEILING_MARGIN, frame_cap_factor: float = _FRAME_CAP_FACTOR,
+) -> int:
+    """Cap a chunk's decode so ``prompt_len + max_new_tokens < max_seqlen``.
+
+    Normally returns the ~(max_seconds * 1.2) frame cap (EOS stops earlier); for an
+    unusually long prompt it falls back to the remaining ceiling. Always >= 1.
+    """
+    frame_cap = round(max_seconds * frame_cap_factor * fps)
+    ceiling = max_seqlen - int(prompt_len) - int(margin)
+    return max(1, min(frame_cap, ceiling))

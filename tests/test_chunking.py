@@ -2,6 +2,7 @@ import numpy as np
 
 from zonos2_mlx.chunking import (
     assemble_chunks,
+    chunk_max_new_tokens,
     estimate_seconds,
     pack_sentences,
     plan_chunks,
@@ -80,3 +81,22 @@ def test_plan_chunks_end_to_end():
     chunks = plan_chunks(text, max_seconds=40.0)
     assert len(chunks) == 1                    # all five pack into one ~big-budget chunk
     assert "One." in chunks[0] and "Five." in chunks[0]
+
+
+def test_frame_cap_stays_under_ceiling():
+    # frame_cap = round(40 * 1.2 * 86.13) = 4134; ceiling = 6144 - prompt - 64
+    mnt = chunk_max_new_tokens(prompt_len=600, max_seconds=40.0, max_seqlen=6144)
+    assert mnt == 4134
+    assert 600 + mnt < 6144
+
+
+def test_frame_cap_binds_to_ceiling_for_long_prompt():
+    # A huge prompt forces the ceiling branch; result + prompt must stay < max_seqlen.
+    mnt = chunk_max_new_tokens(prompt_len=5000, max_seconds=40.0, max_seqlen=6144)
+    assert mnt == 6144 - 5000 - 64       # 1080
+    assert 5000 + mnt < 6144
+
+
+def test_frame_cap_never_negative():
+    mnt = chunk_max_new_tokens(prompt_len=6200, max_seconds=40.0, max_seqlen=6144)
+    assert mnt >= 1
