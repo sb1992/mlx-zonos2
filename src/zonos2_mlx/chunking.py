@@ -161,3 +161,75 @@ def chunk_health(
     else:
         floor = _MIN_SEC_PER_WORD * max(_count_words(t), 1)
     return audio_s >= floor
+
+
+# --- duration estimate + greedy sentence packing (long-form) ---
+# sec/char tuned conservative-high so we under-pack rather than overflow 6144.
+_SEC_PER_CHAR = {"latin": 0.070, "devanagari": 0.110, "cjk": 0.140}
+
+
+def _rate_for(text: str, language: str | None) -> float:
+    code = (language or "").upper()
+    if code in ("ZH", "JA", "YUE", "KO"):
+        return _SEC_PER_CHAR["cjk"]
+    if code == "HI":
+        return _SEC_PER_CHAR["devanagari"]
+    if code:
+        return _SEC_PER_CHAR["latin"]
+    return _SEC_PER_CHAR.get(_detect_script(text), _SEC_PER_CHAR["latin"])
+
+
+def estimate_seconds(
+    text: str, *, language: str | None = None, chars_per_sec: float | None = None
+) -> float:
+    """Estimated spoken duration of ``text`` (non-whitespace chars × sec/char).
+
+    ``chars_per_sec``, when given, overrides the script-aware rate for ALL scripts
+    with ``sec_per_char = 1 / chars_per_sec``.
+    """
+    rate = (1.0 / float(chars_per_sec)) if chars_per_sec else _rate_for(text, language)
+    n = sum(1 for c in text if not c.isspace())
+    return n * rate
+
+
+def pack_sentences(
+    pieces: list[str], *, max_seconds: float,
+    language: str | None = None, chars_per_sec: float | None = None,
+) -> list[str]:
+    """Greedily glue consecutive ``pieces`` while the estimate stays <= ``max_seconds``.
+
+    A lone piece already over budget becomes its own chunk (it was already <=
+    max_chars from the split). Join with a space for spaced scripts, directly for CJK.
+    """
+    chunks: list[str] = []
+    cur = ""
+    for p in pieces:
+        p = p.strip()
+        if not p:
+            continue
+        if not cur:
+            cur = p
+            continue
+        sep = "" if _detect_script(cur + p) == "cjk" else " "
+        cand = cur + sep + p
+        if estimate_seconds(cand, language=language, chars_per_sec=chars_per_sec) > max_seconds:
+            chunks.append(cur)
+            cur = p
+        else:
+            cur = cand
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def plan_chunks(
+    text: str, *, max_seconds: float,
+    language: str | None = None, chars_per_sec: float | None = None,
+) -> list[str]:
+    """Split ``text`` on sentence boundaries (word-safe), then pack to ~``max_seconds``."""
+    pieces = split_for_generation(
+        text, max_chars=resolve_max_chars(text, language=language), language=language
+    )
+    return pack_sentences(
+        pieces, max_seconds=max_seconds, language=language, chars_per_sec=chars_per_sec
+    )
