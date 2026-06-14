@@ -234,24 +234,13 @@ def synthesize_long(
     """Long-form synthesis: pack sentences into ~``max_seconds`` chunks, generate each
     independently with the same speaker vector, concatenate with ``gap_ms`` silence.
 
-    For text that fits one chunk this delegates to ``synthesize`` (byte-identical).
+    A single chunk runs through the same packed-generation loop (so it gets the per-chunk frame cap, not synthesize's short default).
     Model + DAC + speaker are loaded/resolved ONCE and reused across chunks.
     """
     chunks = plan_chunks(text, max_seconds=max_seconds, language=language,
                          chars_per_sec=chars_per_sec)
     if not chunks:
         raise ValueError("synthesize_long() got no text to speak.")
-
-    # Single chunk: identical to the single-pass path.
-    if len(chunks) == 1:
-        return synthesize(
-            chunks[0], speaker_lda=speaker_lda, profile=profile, ref=ref, model=model,
-            weights_dir=weights_dir, dac_dir=dac_dir, speaker_dir=speaker_dir,
-            greedy=greedy, seed=seed, normalize=normalize,
-            speaking_rate_bucket=speaking_rate_bucket, quality_buckets=quality_buckets,
-            clean_speaker_background=clean_speaker_background, accurate_mode=accurate_mode,
-            out_wav=out_wav, **knobs,
-        )
 
     wdir = Path(weights_dir)
     if model is None:
