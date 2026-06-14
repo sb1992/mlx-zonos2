@@ -1,7 +1,7 @@
 [project]
 name = "zonos2-mlx"
 version = "0.1.0"
-description = "Pure-MLX port of Zyphra ZONOS2 8B-MoE TTS for Apple Silicon (zero-shot voice cloning, 44.1 kHz)."
+description = "Pure-MLX port of Zyphra ZONOS2 8B-MoE TTS for Apple Silicon (voice cloning, 44.1 kHz)."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
