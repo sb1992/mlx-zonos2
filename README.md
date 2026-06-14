@@ -125,6 +125,27 @@ Key flags:
 - `--max-new-tokens <n>` — AR decode cap in frames (default 1024).
 - `--sample` — stochastic sampling (the oracle's `SamplingOptions`); default is greedy (the parity path).
 
+### Long-form (longer than one pass)
+
+A single pass is capped at the model's ~60s context. For longer text, `--long`
+splits on sentence boundaries, **packs** several sentences into ~40s chunks,
+generates each with the same voice, and concatenates them:
+
+```bash
+python scripts/zonos2_cli.py --long \
+    --text "$(cat article.txt)" \
+    --profile outputs/voices/alice.zonos \
+    --out outputs/cli/article.wav \
+    --max-seconds 40 --gap-ms 80
+```
+
+`--max-seconds` is the per-chunk target (estimated audio seconds; default 40,
+kept safely under the ~60s ceiling), `--gap-ms` the silence between chunks
+(default 80). Chunks are independent — the same speaker vector conditions each —
+so memory stays at the single-pass footprint regardless of total length. For
+non-Latin text pass `--language ZH`/`HI`/… (or tune `--chars-per-sec`) so the
+chunk-size estimate matches the script.
+
 ## Python API
 
 ```python
