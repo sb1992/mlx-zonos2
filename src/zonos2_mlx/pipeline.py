@@ -22,6 +22,7 @@ import numpy as np
 
 mx.set_memory_limit(int(45 * (1 << 30)))
 
+from .chunking import assemble_chunks, chunk_health, chunk_max_new_tokens, plan_chunks  # noqa: E402
 from .dac import Dac44k  # noqa: E402
 from .generate import SamplingOptions, generate_audio_codes  # noqa: E402
 from .model import Zonos2Model  # noqa: E402
@@ -29,6 +30,20 @@ from .speaker import SpeakerProfile  # noqa: E402
 from .textnorm import build_prompt, normalize_text  # noqa: E402
 
 SAMPLE_RATE = 44100
+
+
+def _build_options(greedy: bool, seed: int, max_new_tokens: int, knobs: dict) -> SamplingOptions:
+    """Build SamplingOptions the same way synthesize() does (greedy -> temp 0)."""
+    opt_kwargs = dict(max_new_tokens=int(max_new_tokens), seed=int(seed))
+    if greedy:
+        opt_kwargs["temperature"] = 0.0
+    for key in (
+        "temperature", "top_k", "top_p", "min_p",
+        "repetition_window", "repetition_penalty", "repetition_codebooks",
+    ):
+        if key in knobs:
+            opt_kwargs[key] = knobs[key]
+    return SamplingOptions(**opt_kwargs)
 
 
 @dataclass
@@ -188,4 +203,111 @@ def synthesize(
         Path(out_wav).parent.mkdir(parents=True, exist_ok=True)
         sf.write(out_wav, np.asarray(wav).reshape(-1), SAMPLE_RATE)
 
+    return result
+
+
+def synthesize_long(
+    text: str,
+    *,
+    speaker_lda=None,
+    profile=None,
+    ref=None,
+    model: Zonos2Model | None = None,
+    weights_dir: str = "weights/zonos2-bf16",
+    dac_dir: str | None = None,
+    speaker_dir: str | None = None,
+    greedy: bool = True,
+    seed: int = 0,
+    max_seconds: float = 40.0,
+    gap_ms: int = 80,
+    chars_per_sec: float | None = None,
+    language: str | None = None,
+    normalize: bool = False,
+    speaking_rate_bucket: int = -1,
+    quality_buckets=None,
+    clean_speaker_background: bool = False,
+    accurate_mode: bool = True,
+    out_wav: str | None = None,
+    progress: bool = False,
+    **knobs,
+) -> SynthesisResult:
+    """Long-form synthesis: pack sentences into ~``max_seconds`` chunks, generate each
+    independently with the same speaker vector, concatenate with ``gap_ms`` silence.
+
+    For text that fits one chunk this delegates to ``synthesize`` (byte-identical).
+    Model + DAC + speaker are loaded/resolved ONCE and reused across chunks.
+    """
+    chunks = plan_chunks(text, max_seconds=max_seconds, language=language,
+                         chars_per_sec=chars_per_sec)
+    if not chunks:
+        raise ValueError("synthesize_long() got no text to speak.")
+
+    # Single chunk: identical to the single-pass path.
+    if len(chunks) == 1:
+        return synthesize(
+            chunks[0], speaker_lda=speaker_lda, profile=profile, ref=ref, model=model,
+            weights_dir=weights_dir, dac_dir=dac_dir, speaker_dir=speaker_dir,
+            greedy=greedy, seed=seed, normalize=normalize,
+            speaking_rate_bucket=speaking_rate_bucket, quality_buckets=quality_buckets,
+            clean_speaker_background=clean_speaker_background, accurate_mode=accurate_mode,
+            out_wav=out_wav, **knobs,
+        )
+
+    wdir = Path(weights_dir)
+    if model is None:
+        model = Zonos2Model.from_pretrained(str(wdir))
+    cfg = model.cfg
+
+    _st = sorted(wdir.glob("*.safetensors"))
+    dit_for_lda = str(_st[0]) if _st else None
+    _spk = Path(speaker_dir) if speaker_dir else (wdir / "speaker_encoder")
+    speaker_enc_dir = str(_spk) if _spk.exists() else None
+    spk = _resolve_speaker_lda(speaker_lda, profile, ref, speaker_enc_dir, dit_for_lda)
+
+    dac_path = dac_dir if dac_dir is not None else str(wdir / "dac_44khz")
+    dac = Dac44k.from_pretrained(dac_path)
+
+    wavs: list[np.ndarray] = []
+    all_codes: list[np.ndarray] = []
+    first_prompt_len = 0
+    for i, chunk_text in enumerate(chunks):
+        norm_text = normalize_text(chunk_text, enable=normalize)
+        prompt, speaker_position = build_prompt(
+            cfg, norm_text, speaking_rate_bucket=speaking_rate_bucket,
+            quality_buckets=quality_buckets, has_speaker=True,
+            clean_speaker_background=clean_speaker_background, accurate_mode=accurate_mode,
+        )
+        prompt_len = int(prompt.shape[1])
+        if i == 0:
+            first_prompt_len = prompt_len
+        mnt = chunk_max_new_tokens(prompt_len, max_seconds=max_seconds, max_seqlen=cfg.max_seqlen)
+        options = _build_options(greedy, seed, mnt, knobs)
+
+        codes, eos_frame = generate_audio_codes(
+            model, mx.array(prompt), spk,
+            int(speaker_position) if speaker_position is not None else 0, options,
+        )
+        wav = dac.decode(codes, pad_id=cfg.audio_pad_id, eos_frame=eos_frame)  # (1, samples)
+        wav = np.asarray(wav).reshape(-1)
+        if not chunk_health(wav, chunk_text, SAMPLE_RATE, language=language):
+            print(f"  [warn] chunk {i + 1}/{len(chunks)} looks degenerate "
+                  f"(silent/too short) for: {chunk_text[:60]!r}")
+        if progress:
+            print(f"  chunk {i + 1}/{len(chunks)}: {wav.shape[0] / SAMPLE_RATE:.2f}s")
+        wavs.append(wav)
+        all_codes.append(codes)
+
+    full = assemble_chunks(wavs, SAMPLE_RATE, gap_ms).reshape(1, -1)
+    result = SynthesisResult(
+        wav=full,
+        sample_rate=SAMPLE_RATE,
+        codes=np.concatenate(all_codes, axis=0),
+        eos_frame=None,
+        prompt_len=first_prompt_len,
+    )
+    if out_wav is not None:
+        import soundfile as sf
+
+        Path(out_wav).parent.mkdir(parents=True, exist_ok=True)
+        sf.write(out_wav, np.asarray(full).reshape(-1), SAMPLE_RATE)
     return result
