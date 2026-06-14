@@ -52,7 +52,7 @@ mx.set_memory_limit(int(45 * (1 << 30)))
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "src"))
 
-from zonos2_mlx.pipeline import SAMPLE_RATE, synthesize  # noqa: E402
+from zonos2_mlx.pipeline import SAMPLE_RATE, synthesize, synthesize_long  # noqa: E402
 from zonos2_mlx.speaker import SpeakerProfile  # noqa: E402
 
 # Quant tier -> trunk weights dir.
@@ -135,6 +135,16 @@ def main() -> int:
         default=1024,
         help="AR decode cap (frames). Default 1024.",
     )
+    ap.add_argument("--long", dest="long_form", action="store_true",
+                    help="Long-form: split on sentence boundaries, pack into chunks, concatenate.")
+    ap.add_argument("--max-seconds", type=float, default=40.0,
+                    help="Long-form per-chunk target in estimated audio seconds (default 40).")
+    ap.add_argument("--gap-ms", type=int, default=80,
+                    help="Long-form silence between chunks, ms (default 80).")
+    ap.add_argument("--chars-per-sec", type=float, default=None,
+                    help="Long-form: override the script-aware duration estimate (chars/sec).")
+    ap.add_argument("--language", default=None,
+                    help="Optional language code (e.g. ZH/HI) to pick chunking rates.")
     ap.add_argument(
         "--greedy",
         dest="greedy",
@@ -184,19 +194,38 @@ def main() -> int:
     )
 
     t0 = time.perf_counter()
-    result = synthesize(
-        args.text,
-        speaker_lda=speaker_lda,
-        weights_dir=weights_dir,
-        dac_dir=dac_dir,
-        speaker_dir=speaker_dir,
-        greedy=args.greedy,
-        seed=args.seed,
-        max_new_tokens=args.max_new_tokens,
-        speaking_rate_bucket=args.speaking_rate,
-        accurate_mode=args.accurate_mode,
-        out_wav=args.out,
-    )
+    if args.long_form:
+        result = synthesize_long(
+            args.text,
+            speaker_lda=speaker_lda,
+            weights_dir=weights_dir,
+            dac_dir=dac_dir,
+            speaker_dir=speaker_dir,
+            greedy=args.greedy,
+            seed=args.seed,
+            max_seconds=args.max_seconds,
+            gap_ms=args.gap_ms,
+            chars_per_sec=args.chars_per_sec,
+            language=args.language,
+            speaking_rate_bucket=args.speaking_rate,
+            accurate_mode=args.accurate_mode,
+            out_wav=args.out,
+            progress=True,
+        )
+    else:
+        result = synthesize(
+            args.text,
+            speaker_lda=speaker_lda,
+            weights_dir=weights_dir,
+            dac_dir=dac_dir,
+            speaker_dir=speaker_dir,
+            greedy=args.greedy,
+            seed=args.seed,
+            max_new_tokens=args.max_new_tokens,
+            speaking_rate_bucket=args.speaking_rate,
+            accurate_mode=args.accurate_mode,
+            out_wav=args.out,
+        )
     elapsed = time.perf_counter() - t0
 
     wav = np.asarray(result.wav).reshape(-1)
